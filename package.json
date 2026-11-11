@@ -3,6 +3,14 @@
   "version": "1.0.0",
   "description": "Checks AI image provenance through OpenAI, optional SynthID detection, and a vision model",
   "author": "linyuchen",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/linyuchen/lucky-lillia-plugin-aiimgdetector.git"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
   "type": "module",
   "main": "lib/index.js",
   "exports": {

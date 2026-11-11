@@ -1,0 +1,148 @@
+name: Publish to npm
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: npm-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Build, test and pack
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: LuckyLillia.Plugins/lucky-lillia-plugin-aiimgdetector
+    outputs:
+      dist-tag: ${{ steps.version.outputs.dist-tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: LuckyLillia.Plugins/lucky-lillia-plugin-aiimgdetector
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+
+      - name: Check version
+        id: version
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFileSync, appendFileSync } from 'node:fs'
+          const { version } = JSON.parse(readFileSync('package.json', 'utf8'))
+          if (process.env.GITHUB_REF_TYPE === 'tag' && process.env.GITHUB_REF_NAME !== `v${version}`) {
+            throw new Error(`Release tag must equal v${version}`)
+          }
+          const distTag = version.includes('-') ? 'next' : 'latest'
+          appendFileSync(process.env.GITHUB_OUTPUT, `dist-tag=${distTag}\n`)
+          NODE
+
+      - name: Check AI service source configuration
+        env:
+          AIPROVIDER_REPOSITORY: ${{ vars.AIPROVIDER_REPOSITORY }}
+          AIPROVIDER_REF: ${{ vars.AIPROVIDER_REF }}
+        run: |
+          node --input-type=module <<'NODE'
+          const { AIPROVIDER_REPOSITORY: repo, AIPROVIDER_REF: ref } = process.env
+          if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo ?? '') || !/^[a-f0-9]{40}$/.test(ref ?? '')) {
+            throw new Error('Set Actions variables AIPROVIDER_REPOSITORY (owner/repository) and AIPROVIDER_REF (full commit SHA). See docs/publishing.md.')
+          }
+          NODE
+
+      # V9 contains the SDK and its real Bot integration test helpers.
+      - name: Check out Bot SDK source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: LuckyLilliaDev/LuckyLilliaBot
+          ref: 432bb423c2db11782033abcac0b2f12ef6fe830f
+          path: LuckyLillia.Bot
+          persist-credentials: false
+
+      - name: Check out AI service source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ vars.AIPROVIDER_REPOSITORY }}
+          ref: ${{ vars.AIPROVIDER_REF }}
+          path: LuckyLillia.Plugins/lucky-lillia-plugin-aiprovider
+          persist-credentials: false
+
+      - name: Build SDK
+        working-directory: LuckyLillia.Bot
+        run: |
+          npm install --global corepack@0.34.4
+          corepack yarn install --immutable --mode=skip-build
+          npm run build:sdk
+
+      - name: Build AI service
+        working-directory: LuckyLillia.Plugins/lucky-lillia-plugin-aiprovider
+        run: |
+          npm ci --ignore-scripts
+          npm run build
+
+      - name: Install plugin dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build and inspect npm package
+        run: |
+          npm run build
+          npm pack --ignore-scripts --json > "$RUNNER_TEMP/npm-pack.json"
+          node scripts/check-pack.mjs "$RUNNER_TEMP/npm-pack.json" "$RUNNER_TEMP/npm-package"
+
+      - name: Save verified npm package
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: npm-package
+          path: ${{ runner.temp }}/npm-package/package.tgz
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Publish verified package
+    needs: verify
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org/
+          package-manager-cache: false
+
+      - name: Check npm trusted publishing support
+        run: |
+          NPM_VERSION="$(npm --version)" node --input-type=module <<'NODE'
+          const [major, minor, patch] = process.env.NPM_VERSION.split('.').map(Number)
+          if (!(major > 11 || (major === 11 && (minor > 5 || (minor === 5 && patch >= 1))))) {
+            throw new Error('npm trusted publishing requires npm >= 11.5.1')
+          }
+          console.log('npm version:', process.env.NPM_VERSION)
+          NODE
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: npm-package
+          path: npm-package
+
+      - name: Publish with npm trusted publishing
+        env:
+          # Optional, temporary first-publication fallback. Normal releases use OIDC.
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_DIST_TAG: ${{ needs.verify.outputs.dist-tag }}
+        run: npm publish ./npm-package/package.tgz --ignore-scripts --provenance --access public --tag "$NPM_DIST_TAG"
