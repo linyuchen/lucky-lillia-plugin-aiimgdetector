@@ -79,7 +79,7 @@ jobs:
       - name: Build SDK
         working-directory: LuckyLillia.Bot
         run: |
-          npm install --global corepack@0.34.4
+          npm install --global corepack@0.34.5
           corepack yarn install --immutable --mode=skip-build
           npm run build:sdk
 
