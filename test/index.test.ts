@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import { createTestApp, type TestApp } from '@luckylillia/plugin-sdk/testing'
-import * as Provider from 'lucky-lillia-aiprovider'
+import * as Provider from '@luckylillia/plugin-aiprovider'
 import * as AiImgDetector from '../src/index.js'
 import { completion, FakeAnswer, FakeCall, PNG, startFakeAi } from './fakeAi.js'
 import { SynthIdClient } from '../src/synthid.js'

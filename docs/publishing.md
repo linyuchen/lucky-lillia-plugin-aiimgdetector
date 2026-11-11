@@ -6,27 +6,19 @@
 - 正式版本发布到 `latest`；带预发布后缀的版本（例如 `1.1.0-beta.1`）发布到 `next`。
 - Actions 页面上的 **Run workflow** 只验证、保存安装包，不发布 npm。安装包保留 14 天。
 
-## 配置构建依赖
+## 构建依赖
 
-SDK 和 AI 服务当前尚未发布 npm，开发依赖使用本地 `file:` 路径。工作流会还原相同的目录结构：SDK 来自 `LuckyLilliaDev/LuckyLilliaBot` 的固定 V9 提交，AI 服务来自单独的源码仓库。
+SDK 和 AI 服务直接从 npm 安装，包名分别为 `@luckylillia/plugin-sdk`、`@luckylillia/plugin-aiprovider`。工作流通过 `npm ci` 按 `package-lock.json` 锁定的版本安装，无需额外检出 Bot 或 AI 服务源码，也无需配置仓库变量。
 
-```text
-LuckyLillia.Bot/
-LuckyLillia.Plugins/
-  lucky-lillia-plugin-aiprovider/
-  lucky-lillia-plugin-aiimgdetector/
+本地开发同样可以在本仓库直接执行：
+
+```sh
+npm ci --registry=https://registry.npmjs.org/
+npm test
+npm run build
 ```
 
-在本仓库 [Settings → Secrets and variables → Actions → Variables](https://github.com/linyuchen/lucky-lillia-plugin-aiimgdetector/settings/variables/actions) 配置：
-
-| 变量 | 值 |
-| --- | --- |
-| `AIPROVIDER_REPOSITORY` | AI 服务的公开 GitHub 仓库，格式为 `owner/repository` |
-| `AIPROVIDER_REF` | 对应版本的完整 40 位提交 SHA |
-
-AI 服务仓库根目录需要有真实的 `src/`、`package.json`、`package-lock.json` 和 `tsconfig.json`，包名为 `lucky-lillia-aiprovider`，提供 `npm run build`。其本地 SDK 依赖路径需为 `file:../../LuckyLillia.Bot/packages/plugin-sdk`。当前工作流使用公开源码，不配置跨仓库私有访问凭证。缺少变量时会在安装前明确报错。
-
-SDK 的提交固定在工作流中。更新 SDK 或 AI 服务后，先手动运行验证，再发布版本。
+更新依赖时一并提交 `package.json` 和 `package-lock.json`，先手动运行验证，再发布版本。运行插件的 Bot 仍需提供兼容的 SDK，并安装、启用 AI 服务插件。
 
 ## 首次 npm 授权
 

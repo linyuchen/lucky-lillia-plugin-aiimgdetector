@@ -1,5 +1,5 @@
 import { Context, h, Schema, Session } from '@luckylillia/plugin-sdk'
-import type { AiError } from 'lucky-lillia-aiprovider'
+import type { AiError } from '@luckylillia/plugin-aiprovider'
 import { download, Image } from './image.js'
 import { checkProvenance, provenanceService } from './provenance.js'
 import { SynthIdClient, handleSynthId, type SynthIdConfig } from './synthid.js'

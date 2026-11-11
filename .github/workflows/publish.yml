@@ -18,15 +18,11 @@ jobs:
     name: Build, test and pack
     runs-on: ubuntu-latest
     timeout-minutes: 25
-    defaults:
-      run:
-        working-directory: LuckyLillia.Plugins/lucky-lillia-plugin-aiimgdetector
     outputs:
       dist-tag: ${{ steps.version.outputs.dist-tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          path: LuckyLillia.Plugins/lucky-lillia-plugin-aiimgdetector
           persist-credentials: false
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -47,50 +43,8 @@ jobs:
           appendFileSync(process.env.GITHUB_OUTPUT, `dist-tag=${distTag}\n`)
           NODE
 
-      - name: Check AI service source configuration
-        env:
-          AIPROVIDER_REPOSITORY: ${{ vars.AIPROVIDER_REPOSITORY }}
-          AIPROVIDER_REF: ${{ vars.AIPROVIDER_REF }}
-        run: |
-          node --input-type=module <<'NODE'
-          const { AIPROVIDER_REPOSITORY: repo, AIPROVIDER_REF: ref } = process.env
-          if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo ?? '') || !/^[a-f0-9]{40}$/.test(ref ?? '')) {
-            throw new Error('Set Actions variables AIPROVIDER_REPOSITORY (owner/repository) and AIPROVIDER_REF (full commit SHA). See docs/publishing.md.')
-          }
-          NODE
-
-      # V9 contains the SDK and its real Bot integration test helpers.
-      - name: Check out Bot SDK source
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: LuckyLilliaDev/LuckyLilliaBot
-          ref: 432bb423c2db11782033abcac0b2f12ef6fe830f
-          path: LuckyLillia.Bot
-          persist-credentials: false
-
-      - name: Check out AI service source
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: ${{ vars.AIPROVIDER_REPOSITORY }}
-          ref: ${{ vars.AIPROVIDER_REF }}
-          path: LuckyLillia.Plugins/lucky-lillia-plugin-aiprovider
-          persist-credentials: false
-
-      - name: Build SDK
-        working-directory: LuckyLillia.Bot
-        run: |
-          npm install --global corepack@0.34.5
-          corepack yarn install --immutable --mode=skip-build
-          npm run build:sdk
-
-      - name: Build AI service
-        working-directory: LuckyLillia.Plugins/lucky-lillia-plugin-aiprovider
-        run: |
-          npm ci --ignore-scripts
-          npm run build
-
       - name: Install plugin dependencies
-        run: npm ci
+        run: npm ci --registry=https://registry.npmjs.org/
 
       - name: Run tests
         run: npm test

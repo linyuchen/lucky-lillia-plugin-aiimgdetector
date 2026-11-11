@@ -42,13 +42,13 @@
     "playwright-core": "^1.65.0"
   },
   "peerDependencies": {
-    "@luckylillia/plugin-sdk": "^1.0.0",
-    "lucky-lillia-aiprovider": "^1.0.0"
+    "@luckylillia/plugin-sdk": "^1.0.1",
+    "@luckylillia/plugin-aiprovider": "^1.0.0"
   },
   "devDependencies": {
-    "@luckylillia/plugin-sdk": "file:../../LuckyLillia.Bot/packages/plugin-sdk",
+    "@luckylillia/plugin-sdk": "^1.0.1",
     "@types/node": "^24.12.4",
-    "lucky-lillia-aiprovider": "file:../lucky-lillia-plugin-aiprovider",
+    "@luckylillia/plugin-aiprovider": "^1.0.0",
     "typescript": "^7.0.2",
     "vitest": "^4.1.11"
   },
@@ -76,7 +76,7 @@
       }
     ],
     "dependencies": {
-      "lucky-lillia-aiprovider": "^1.0.0"
+      "@luckylillia/plugin-aiprovider": "^1.0.0"
     },
     "service": {
       "required": [

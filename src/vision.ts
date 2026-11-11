@@ -1,4 +1,4 @@
-import type { AiProvider } from 'lucky-lillia-aiprovider'
+import type { AiProvider } from '@luckylillia/plugin-aiprovider'
 import type { Image } from './image.js'
 
 export type Verdict = 'ai' | 'real' | 'unsure'
