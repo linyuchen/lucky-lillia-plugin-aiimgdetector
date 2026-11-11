@@ -1,0 +1,82 @@
+{
+  "name": "lucky-lillia-plugin-aiimgdetector",
+  "version": "1.0.0",
+  "description": "Checks AI image provenance through OpenAI, optional SynthID detection, and a vision model",
+  "author": "linyuchen",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": {
+      "development": "./src/index.ts",
+      "default": "./lib/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "webui",
+    "src",
+    "assets",
+    "docs"
+  ],
+  "scripts": {
+    "build": "tsc -p .",
+    "dev": "tsc -p . --watch",
+    "test": "vitest run",
+    "test:browser": "node test/synthid-browser.mjs && node test/synthid-native-proxy.mjs",
+    "prepack": "npm run build"
+  },
+  "keywords": [
+    "luckylillia-plugin"
+  ],
+  "dependencies": {
+    "@contentauth/toolkit": "0.13.14",
+    "playwright-core": "^1.65.0"
+  },
+  "peerDependencies": {
+    "@luckylillia/plugin-sdk": "^1.0.0",
+    "lucky-lillia-aiprovider": "^1.0.0"
+  },
+  "devDependencies": {
+    "@luckylillia/plugin-sdk": "file:../../LuckyLillia.Bot/packages/plugin-sdk",
+    "@types/node": "^24.12.4",
+    "lucky-lillia-aiprovider": "file:../lucky-lillia-plugin-aiprovider",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.11"
+  },
+  "llbot": {
+    "webui": "webui/index.js",
+    "title": {
+      "zh": "AI 图片检测",
+      "en": "aiimgdetector"
+    },
+    "category": "chat",
+    "description": {
+      "zh": "对着图片回复「ai吗」（或者「ai吗」后面直接带图），通过 OpenAI 水印检测、可选的 SynthID 检测和看图模型判断是否由 AI 生成。需要启用 AI 服务插件",
+      "en": "Reply \"ai吗\" to an image (or send it with the image) to check AI provenance through OpenAI, optional SynthID detection, and a vision model. Needs the AI Service plugin"
+    },
+    "icon": "assets/icon.svg",
+    "details": "docs/details.md",
+    "screenshots": [
+      {
+        "src": "assets/demo.jpg",
+        "caption": "对着群友的图回复「ai吗」"
+      },
+      {
+        "src": "assets/settings.jpg",
+        "caption": "设置：选择 AI 服务及看图模型"
+      }
+    ],
+    "dependencies": {
+      "lucky-lillia-aiprovider": "^1.0.0"
+    },
+    "service": {
+      "required": [
+        "bots",
+        "ai",
+        "http",
+        "commands"
+      ]
+    }
+  }
+}
