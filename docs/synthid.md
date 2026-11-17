@@ -2,7 +2,7 @@
 
 SynthID 默认关闭。启用后，只需配置当前账号的 `refresh_token`。检测通过宿主的 HTTP 服务完成：每张图片都会获取新的挑战、在独立 Node.js 子进程中执行官网下发的校验程序、生成新的上传路径和绑定该路径的校验凭据，然后上传原图并读取结果。检测不会启动 Chrome、控制浏览器或重放旧图片的 `bg_token`。
 
-当前打包的原生运行时支持 **Windows x64、Node.js 24**。它包含该环境下验证通过的原生兼容模块；其他操作系统或 Node ABI 会明确报告运行环境不可用。运行时依赖已随插件声明，不需要安装浏览器来检测图片。
+检测运行时使用纯 JavaScript，要求 **Node.js 24 或以上版本**，不再依赖 `.node` 原生模块或固定 Node ABI。运行时依赖已随插件声明，不需要安装浏览器来检测图片。
 
 ## 配置登录凭据
 
@@ -39,15 +39,15 @@ SynthID 默认关闭。启用后，只需配置当前账号的 `refresh_token`�
 | 状态 | 含义与处理 |
 | --- | --- |
 | 检出水印 | 显示「图片是 OpenAI 生成」等提示，来源以服务返回值为准 |
-| 未检出 | 未检出支持的水印，不能据此确认是人工图片 |
+| 未检出 | 没有找到 AI 特征，但不能完全确认不是 AI |
 | 无法判断 | 服务没有足够的信息，例如图片质量或细节不足 |
 | 尚未登录或登录失效 | 自动登录，或更新当前账号的 `refresh_token` |
 | 服务拒绝（RPC 7 / HTTP 403） | 当前请求未被接受，稍后重试；不视为未检出 |
 | 额度用完 | 按提示等待，不重复上传 |
-| 运行环境不可用 | 使用 Windows x64、Node.js 24，并确认插件运行时文件完整 |
+| 运行环境不可用 | 使用 Node.js 24 或以上版本，并确认插件运行时文件完整 |
 | 无法识别结果 | 官网接口可能变化，不视为未检出 |
 
-服务端接受情况可能随时间变化。2026-11-17，编译后的正式 HTTP 客户端通过宿主 HTTP 服务使用已保存账号完成真实检测，返回 `detected`、来源 `openai`；该结果证明当次链路可用，不保证服务始终接受所有请求。
+服务端接受情况可能随时间变化。2026-11-17，编译后的纯 JavaScript HTTP 客户端在 Windows x64、Node.js 24 下通过宿主 HTTP 服务使用已保存账号完成真实检测，返回 `detected`、来源 `openai`；子进程通过 `--no-addons` 禁止加载原生模块。该结果证明当次链路可用，不保证服务始终接受所有请求。
 
 ## 数据保存
 
@@ -61,8 +61,8 @@ SynthID 默认关闭。启用后，只需配置当前账号的 `refresh_token`�
 
 运行 `npm run build` 和 `npm test`。测试使用本地 HTTP 服务和合成账号，覆盖参数绑定、原图上传、账号验证、队列、取消、限流、令牌轮换、配置更新和 WebUI 接口。
 
-Windows x64、Node.js 24 下执行 `npm run test:runtime`，使用本地自编程序验证完整解释器运行时、快照、原生资源恢复与进程退出，不连接外网。安装 Chrome 或 Edge 后执行 `npm run test:browser`，验证可选登录、凭据读取、无测试图上传和代理；源码加载还可执行 `node ../../LuckyLillia.Bot/node_modules/tsx/dist/cli.mjs test/synthid-browser.mjs --source`。
+执行 `npm run test:runtime`，使用本地自编程序验证完整解释器运行时、跨窗口调用、快照、资源恢复与进程退出，不连接外网。安装 Chrome 或 Edge 后执行 `npm run test:browser`，验证可选登录、凭据读取、无测试图上传和代理；源码加载还可执行 `node ../../LuckyLillia.Bot/node_modules/tsx/dist/cli.mjs test/synthid-browser.mjs --source`。
 
-`scripts/check-pack.mjs` 检查源码、编译目录中的运行时资源和原生模块。`scripts/smoke-synthid-runtime.mjs` 可接收安装后的 `entry.mjs` 路径，以验证干净 npm 安装及依赖提升后的实际布局。
+`scripts/check-pack.mjs` 检查运行时资源、UTF-8 文本可读性，并拒绝打包原生二进制文件。`scripts/smoke-synthid-runtime.mjs` 可接收安装后的 `entry.mjs` 路径，以验证干净 npm 安装及依赖提升后的实际布局。
 
 结果协议参考 [sisi0318/synthid 的 PROTOCOL.md](https://github.com/sisi0318/synthid/blob/a4baf87fbe049950b9120a11a239348fd608c55a/PROTOCOL.md)。上游未提供标准 LICENSE，其 README 写有研究用途和商业集成限制；本插件的协议实现不代表上游发布授权已经明确。

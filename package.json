@@ -1,6 +1,6 @@
 {
   "name": "lucky-lillia-plugin-aiimgdetector",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Checks AI image provenance through OpenAI, optional SynthID detection, and a vision model",
   "author": "linyuchen",
   "repository": {

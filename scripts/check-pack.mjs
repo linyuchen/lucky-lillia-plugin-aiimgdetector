@@ -26,10 +26,8 @@ const required = [
   ...['src', 'lib'].flatMap(root => [
     `${root}/synthid-http.${root === 'src' ? 'ts' : 'js'}`,
     ...['entry.mjs', 'lifecycle-client.mjs', 'lifecycle-worker.mjs', 'realm-init.js',
-      'realm-pointer-diagnostic.js', 'realm-activation-diagnostic.js', 'realm-focus-diagnostic.js', 'realm-private-bootstrap.js',
-      'native-display-frames/build/Release/native_display_frames.node',
-      'native-timer-resolution/build/Release/native_timer_resolution.node',
-      'native-webidl-bridge/build/Release/native_webidl_bridge.node',
+      'realm-pointer-diagnostic.js', 'realm-activation-diagnostic.js', 'realm-focus-diagnostic.js',
+      'runtime-javascript-bindings.mjs',
     ].map(file => `${root}/synthid-http-runtime/${file}`),
   ]),
   ...(manifest.llbot.details === undefined ? [] : [manifest.llbot.details]),
@@ -40,8 +38,13 @@ for (const path of required) {
   assert(files.has(path.replace(/^\.\//, '')), `Package is missing ${path}`)
 }
 for (const path of files) {
+  assert(!/\.(?:node|wasm|exe|dll|so|dylib)$/i.test(path), `Package contains a native binary: ${path}`)
   assert(!/(^|\/)(?:node_modules|output|test|scripts|\.github|\.playwright-cli)(\/|$)/.test(path), `Unexpected packaged file: ${path}`)
   assert(!/(^|\/)\.env(?:\.|$)/.test(path), `Unexpected environment file: ${path}`)
+  if (/\.(?:mjs|cjs|js|mts|cts|ts|tsx|jsx|json|ps1|svg)$/i.test(path)) {
+    const text = new TextDecoder('utf-8', { fatal: true }).decode(readFileSync(path))
+    assert(!/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(text), `Package contains unreadable control characters: ${path}`)
+  }
 }
 
 mkdirSync(destination, { recursive: true })

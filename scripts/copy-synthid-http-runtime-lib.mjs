@@ -1,4 +1,4 @@
-// Copies the collected runtime (modules, addons, generated entry) into lib/
+// Copies the JavaScript runtime and realm resources into lib/
 // after tsc, so the published package resolves it next to the compiled JS.
 import {cp,rm,mkdir} from 'node:fs/promises';
 import {fileURLToPath} from 'node:url';

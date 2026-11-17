@@ -99,8 +99,8 @@ export class HttpSynthIdClient {
   }
 
   private async prepare(image: Image, mime: string, signal: AbortSignal): Promise<SynthIdResult> {
-    if (!this.options.loadRuntime && (process.platform !== 'win32' || process.arch !== 'x64' || process.versions.modules !== '137')) {
-      throw new SynthIdError('runtime', 'SynthID HTTP runtime requires Windows x64 and Node.js 24')
+    if (!this.options.loadRuntime && Number(process.versions.node.split('.')[0]) < 24) {
+      throw new SynthIdError('runtime', 'SynthID HTTP runtime requires Node.js 24 or later')
     }
     this.runtime ??= (this.options.loadRuntime ?? (() => import('./synthid-http-runtime/entry.mjs')))()
     const entry = await this.runtime
@@ -236,21 +236,20 @@ export class HttpSynthIdClient {
         frameUrl = url.href
         frameHTML = await (url.origin === ORIGIN ? await session.request(frameUrl) : await request(frameUrl, {}, 'frame')).text()
       }
-      lifecycle = entry.createLifecycleClient({ workerExecutable: process.execPath, signal: operation.signal,
-        webidlBrandErrors: true, nativePluginGetters: true, nativeTimerResolution: true, nativeDisplayFrames: true,
+      lifecycle = entry.createLifecycleClient({ signal: operation.signal,
+        webidlBrandErrors: true,
         timeouts: { init: Math.min(this.options.timeout, 25_000), snapshot: Math.min(this.options.timeout, 15_000) }, maxLifetimeMs: Math.max(100, this.options.timeout) })
       const initialized = await lifecycle.initialize({ ...await session.environment(),
         program: challenge.program, globalName: challenge.globalName, rawExperiments: challenge.clientExperimentsStateBlob ?? '',
         experiments: entry.normalizeOfficialExperimentState(challenge.clientExperimentsStateBlob),
         interpreter, interpreterSourceUrl, frameUrl, frameHTML, userAgent: USER_AGENT,
-        eventClockCompatibility: true, enablePointerDiagnostics: true, clockPrecision100us: true, chromiumTimeClamper: true,
+        eventClockCompatibility: true, enablePointerDiagnostics: true, clockPrecision100us: true,
         runtimeWebCompatibility: true, runtimeChildWebCompatibility: true, runtimeNavigatorCompatibility: true,
         runtimeWindowStateCompatibility: true, runtimeNetworkCompatibility: true, runtimeDetachedFrameCompatibility: true,
         runtimeWebIdlRealmCompatibility: true, runtimeWebIdlCallableControl: true, runtimePermissionsBinding: true,
         runtimeAnchorHrefTranslate: true, runtimeMouseMediaCompatibility: true, runtimeChromeCsi: true, runtimeCssProperties: true,
-        nativeWebdriverGetter: true, nativeMediaBinding: true, activationStateControl: true, activationTimingControl: true,
-        virtualFocusControl: true, webidlBrandErrors: true, nativePluginGetters: true, nativePluginBrandValidation: true,
-        nativeTimerResolution: true, nativeDisplayFrames: true,
+        javascriptBindings: true, activationStateControl: true, activationTimingControl: true,
+        virtualFocusControl: true, webidlBrandErrors: true,
       })
       if (!initialized.success || !(await lifecycle.dispatchPointerDiagnostics()).success) throw new SynthIdError('response', 'SynthID interpreter initialization failed')
       const path = 'users/' + auth.userId + '/files/' + randomUUID()

@@ -3,7 +3,7 @@
 import generatedUtils from 'jsdom/lib/jsdom/living/generated/utils.js';
 import PerformanceModule from 'jsdom/lib/jsdom/living/hr-time/Performance-impl.js';
 import jsdomPackage from 'jsdom/package.json' with { type: 'json' };
-import {quantizeCompletedClock100us,chromiumTimeClamperActive,coarsenCompletedClockForOrigin} from './runtime-clock-precision-control.mjs';
+import {quantizeCompletedClock100us} from './runtime-clock-precision-control.mjs';
 const MAX_ENTRIES = 512;
 const TIMING_FIELDS = ['workerStart', 'redirectStart', 'redirectEnd', 'fetchStart',
   'domainLookupStart', 'domainLookupEnd', 'connectStart', 'secureConnectionStart',
@@ -185,8 +185,7 @@ export function installRuntimeWebCompat(window, options = {}) {
     performanceImpl._nowAtTimeOrigin = oldNowAtOrigin;
     performanceImpl = undefined;
   };
-  // Options and installed methods are realm-owned. The optional Chromium clock
-  // bridge stays private in the strict installer; Event/DOMException keep the
+  // Options and installed methods are realm-owned; Event/DOMException keep the
   // existing JSDOM wrappers.
   const payload = JSON.stringify({ physicalMemoryBytes, deviceMemoryMaxGiB, platform, virtualScreen, virtualMouse,
     entries, clockOffsetMs, networkSample, clockPrecision100us, userActivationWebIdlCompatibility,
@@ -194,13 +193,7 @@ export function installRuntimeWebCompat(window, options = {}) {
   const activationBridge = userActivationWebIdlCompatibility ? makeActivationBridge(window) : undefined;
   try {
     let controller;
-    if(clockPrecision100us&&chromiumTimeClamperActive()){
-      const impl=generatedUtils.implForWrapper(window.performance),RealmError=window.Error;
-      // The private host bridge is captured only by this strict installer; it
-      // never becomes a window property. Failures remain realm-owned errors.
-      const quantize=value=>{try{return coarsenCompletedClockForOrigin(value,impl._nowAtTimeOrigin);}catch{throw new RealmError('INVALID_COARSENED_CLOCK');}};
-      controller=Reflect.apply(window.eval('('+installInRealm.toString()+')'),undefined,[window.eval('('+payload+')'),quantize,activationBridge]);
-    } else if (activationBridge) {
+    if (activationBridge) {
       controller=Reflect.apply(window.eval('('+installInRealm.toString()+')'),undefined,[window.eval('('+payload+')'),
         clockPrecision100us ? window.eval('('+quantizeCompletedClock100us.toString()+')') : undefined,activationBridge]);
     }else controller = window.eval('(' + installInRealm.toString() + ')(' + payload + ',' + (clockPrecision100us?'('+quantizeCompletedClock100us.toString()+')':'undefined') + ')');

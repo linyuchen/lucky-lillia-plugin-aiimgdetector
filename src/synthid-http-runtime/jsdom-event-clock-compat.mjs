@@ -2,7 +2,7 @@ import EventModule from 'jsdom/lib/jsdom/living/events/Event-impl.js';
 import PerformanceModule from 'jsdom/lib/jsdom/living/hr-time/Performance-impl.js';
 import generatedUtils from 'jsdom/lib/jsdom/living/generated/utils.js';
 import jsdomPackage from 'jsdom/package.json' with { type: 'json' };
-import {uncoarsenedPerformanceNow,coarsenCompletedClockForOrigin,chromiumTimeClamperActive,quantizeCompletedClock100us} from './runtime-clock-precision-control.mjs';
+import {uncoarsenedPerformanceNow,quantizeCompletedClock100us} from './runtime-clock-precision-control.mjs';
 
 const EventImpl = EventModule.implementation;
 const PerformanceImpl = PerformanceModule.implementation;
@@ -56,7 +56,7 @@ export function installEventClockCompatibility(options = {}) {
       clocks.set(realm, clock);
     }
     const completed = Reflect.apply(performanceNow, clock, []);
-    const value = clockPrecision100us ? (chromiumTimeClamperActive()?coarsenCompletedClockForOrigin(completed,clock._nowAtTimeOrigin):quantizeCompletedClock100us(completed)) : completed;
+    const value = clockPrecision100us ? quantizeCompletedClock100us(completed) : completed;
     if (!Number.isFinite(value) || value < 0) unsupported();
     // Match the exact property flags produced by EventImpl's normal assignment.
     // Every subsequent access uses this stable own value, not the setter/clock.

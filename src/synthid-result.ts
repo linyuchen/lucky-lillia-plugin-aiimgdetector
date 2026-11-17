@@ -147,7 +147,7 @@ export function formatSynthId(result: Exclude<SynthIdResult, { status: 'quota_ex
 
 export function describeSynthIdFailure(error: SynthIdError): string {
   switch (error.kind) {
-    case 'runtime': return 'SynthID HTTP 运行环境不可用，当前需要 Windows x64 和 Node.js 24。'
+    case 'runtime': return 'SynthID HTTP 运行环境不可用，当前需要 Node.js 24 或以上版本。'
     case 'config':
     case 'browser': return 'SynthID 浏览器无法启动，请确认运行 Bot 的电脑已安装 Chrome 或 Edge，并且能打开桌面窗口。'
     case 'proxy': return 'SynthID 浏览器无法使用当前代理，请检查「代理」插件的地址与账号密码；浏览器不支持带账号密码的 SOCKS5 代理。'

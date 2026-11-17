@@ -52,6 +52,7 @@ jobs:
       - name: Build and inspect npm package
         run: |
           npm run build
+          npm run test:runtime
           npm pack --ignore-scripts --json > "$RUNNER_TEMP/npm-pack.json"
           node scripts/check-pack.mjs "$RUNNER_TEMP/npm-pack.json" "$RUNNER_TEMP/npm-package"
 
