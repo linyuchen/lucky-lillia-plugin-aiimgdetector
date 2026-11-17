@@ -4,7 +4,7 @@ import { SchemaForm, usePluginContext, usePluginStatus } from '@luckylillia/plug
 
 const endpoint = '/api/aiimgdetector/synthid'
 const states = new Set(['logged-out', 'opening', 'awaiting-login', 'capturing', 'ready', 'error'])
-const credentialKeys = ['refreshToken', 'pushFilename', 'bgToken']
+const credentialKeys = ['refreshToken']
 const SynthIdEditorContext = createContext(null)
 const emptyCredentials = value => credentialKeys.every(key => !String(value?.[key] ?? '').trim())
 const line = { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }
@@ -156,7 +156,7 @@ function SynthIdAccount({ credentials, onCredentials }) {
           style: status.state === 'error' ? errorStyle : muted }, status.message),
         error && h('p', { role: 'alert', style: errorStyle }, error),
         h('p', { className: 'text-theme-muted', style: muted },
-          '完成 Google 登录后，插件会自动使用内置测试图获取凭证并填入下方，无需自行选择图片。也可以直接手动填写已有凭证。'),
+          '完成 Google 登录后，插件会读取登录凭据并填入下方。检测通过 HTTP 完成，无需上传测试图片或保留浏览器窗口。也可直接填写自己的 refresh_token。'),
         filled && h('p', { className: 'text-theme-secondary', role: 'status', style: muted },
           '凭证已自动填入，请点击弹窗底部「保存」。'),
         status?.state === 'ready' && h('p', { className: 'text-theme-muted', style: muted },
@@ -183,28 +183,19 @@ function CredentialHelp() {
   return h('section', { className: 'bg-theme-item', 'aria-label': 'SynthID 手动凭证说明',
     style: { padding: 16, borderRadius: 12, display: 'grid', gap: 10, minWidth: 0 } },
     h('p', { className: 'text-theme-secondary', style: muted },
-      '浏览器登录会自动填写这三项，保存后使用该会话为每张图片完成网页校验。也可从自己的浏览器复制凭证，手动填写不要求 Bot 安装浏览器。填写或修改后，点击弹窗底部「保存」。'),
+      '只需填写登录凭据 refresh_token。插件会为每张图片生成新的上传标识和校验凭据，通过 HTTP 检测。可用登录按钮自动填写，也可从自己的浏览器复制；填写或修改后点击底部「保存」。'),
     h('details', null,
       h('summary', { className: 'text-sm font-medium text-theme', style: { cursor: 'pointer' } }, '如何获取凭证（在自己的浏览器中操作）'),
       h('ol', { className: 'text-theme-secondary', style: { ...muted, marginTop: 12, paddingLeft: 22, listStyle: 'decimal', display: 'grid', gap: 10 } },
         h('li', null, '用 Chrome 或 Edge 打开 ',
           h('a', { href: 'https://synthid.com/image-detection', target: '_blank', rel: 'noopener noreferrer', style: { textDecoration: 'underline' } }, 'synthid.com/image-detection'),
           '，完成 Google 登录与首次使用提示。'),
-        h('li', null, '按 F12 打开开发者工具。在 Network（网络）中勾选 Preserve log（保留日志），再上传一张测试图片，等待检测完成。后两项必须来自这一次检测。'),
         h('li', null, '获取「登录凭据」：切到 Application（应用）→ IndexedDB → ', code('firebaseLocalStorageDb'), ' → ', code('firebaseLocalStorage'),
           '，展开当前账号的 ', code('firebase:authUser:…'), ' 记录，在 value 中复制 ', code('stsTokenManager.refreshToken'),
           ' 的完整值，不带外围引号。没有该数据库时，确认已登录，再刷新开发者工具中的数据。'),
-        h('li', null, '获取「上传标识」：回到 Network，找到上传图片的 ', code('content-push'),
-          ' 请求，在 Headers（标头）→ Request Headers（请求标头）中复制 ', code('Push-Filename'), '，格式为 ', code('users/账号ID/files/文件ID'),
-          '。也可筛选 ', code('TZRKo'), '，选择 ', code('batchexecute?rpcids=TZRKo'), ' 的 POST 请求，在 Payload（负载）→ Form Data（表单数据）→ ', code('f.req'),
-          ' 中找到同一标识。它是网站的上传标识，不是电脑上的文件夹，不能自行编写。'),
-        h('li', null, '获取「网页校验凭据」：打开同一次检测的 ', code('batchexecute?rpcids=TZRKo'),
-          ' 请求，在 Request Headers 中复制 ', code('X-Goog-Ext-525006476-Jspb'),
-          ' 的完整 JSON 数组（推荐），也可只复制数组第 6 项（索引 5，以 ', code('!'),
-          ' 开头的字符串）。看不到时展开请求标头，或切换「查看源代码」。'),
       ),
       h('p', { className: 'text-theme-muted', style: { ...muted, marginTop: 12 } },
-        '三项必须属于同一个账号。手动凭证能否用于后续图片由网站决定，网页校验被拒绝不代表登录失效。手动填写后遇到校验失败，可改用插件浏览器登录，或在网页重新检测一次，并一起更新上传标识和网页校验凭据。'),
+        '无需复制上传标识或网页校验请求头。旧版本保存的这两项不再用于检测。遇到服务拒绝可稍后重试；只有提示登录失效时才需要更新登录凭据。'),
       h('p', { className: 'text-theme-muted', style: { ...muted, marginTop: 8 } },
         '这些内容可以代表你的登录身份，请勿发送给他人或放进截图。保存后界面会遮罩显示；Bot 配置文件仍需妥善保管。'),
     ),

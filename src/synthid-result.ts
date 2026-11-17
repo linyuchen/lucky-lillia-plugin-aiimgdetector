@@ -5,7 +5,7 @@ export type SynthIdResult =
   | { status: 'uncertain'; reason?: number }
   | { status: 'quota_exceeded'; retryAfterSeconds: number }
 
-export type SynthIdErrorKind = 'config' | 'browser' | 'proxy' | 'terms' | 'auth' | 'permission' | 'verification' | 'rate-limit' | 'busy'
+export type SynthIdErrorKind = 'config' | 'runtime' | 'browser' | 'proxy' | 'terms' | 'auth' | 'permission' | 'verification' | 'rate-limit' | 'busy'
   | 'network' | 'timeout' | 'request' | 'response' | 'server' | 'cancelled'
 
 export type SynthIdNetworkCode = 'ECONNRESET' | 'ECONNREFUSED' | 'ENOTFOUND' | 'EAI_AGAIN' | 'ETIMEDOUT'
@@ -129,7 +129,7 @@ export function parseSynthIdResponse(text: string): SynthIdResult {
 }
 
 export function formatSynthId(result: Exclude<SynthIdResult, { status: 'quota_exceeded' }>): string {
-  if (result.status === 'not_detected') return '未检出支持的 AI 水印，不能据此确认是人工图片。'
+  if (result.status === 'not_detected') return '没有找到 AI 特征，但不能完全确认不是 AI。'
   if (result.status === 'uncertain') {
     const reasons: Record<number, string> = {
       1: '图片为空',
@@ -142,13 +142,12 @@ export function formatSynthId(result: Exclude<SynthIdResult, { status: 'quota_ex
   }
   const sources: Record<string, string> = { google: 'Google', openai: 'OpenAI', nvidia: 'NVIDIA', kakao: 'Kakao' }
   const source = result.source && (Object.hasOwn(sources, result.source.toLowerCase()) ? sources[result.source.toLowerCase()] : result.source)
-  const levels = { 'very-high': '很高', high: '高', medium: '中等' }
-  return `SynthID 检出${source ? `来自 ${source} 的` : ''} AI 生成标记。`
-    + (result.confidence ? `水印置信度：${levels[result.confidence]}。` : '')
+  return `图片是 ${source || 'AI'} 生成`
 }
 
 export function describeSynthIdFailure(error: SynthIdError): string {
   switch (error.kind) {
+    case 'runtime': return 'SynthID HTTP 运行环境不可用，当前需要 Windows x64 和 Node.js 24。'
     case 'config':
     case 'browser': return 'SynthID 浏览器无法启动，请确认运行 Bot 的电脑已安装 Chrome 或 Edge，并且能打开桌面窗口。'
     case 'proxy': return 'SynthID 浏览器无法使用当前代理，请检查「代理」插件的地址与账号密码；浏览器不支持带账号密码的 SOCKS5 代理。'

@@ -127,7 +127,7 @@ describe('SynthID wire results', () => {
     const body = JSON.stringify([['wrb.fr', 'TZRKo', JSON.stringify([null, null, null, null, [[3]]])]])
     const result = parseSynthIdResponse(body)
     expect(result).toEqual({ status: 'detected', source: undefined, confidence: undefined })
-    expect(formatSynthId(result as Extract<typeof result, { status: 'detected' }>)).toBe('SynthID 检出 AI 生成标记。')
+    expect(formatSynthId(result as Extract<typeof result, { status: 'detected' }>)).toBe('图片是 AI 生成')
   })
 
   it('does not turn a false-positive metric into an AI probability', () => {

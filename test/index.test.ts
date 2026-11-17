@@ -219,7 +219,7 @@ describe('aiimgdetector', () => {
   it('says so when nothing turns up, and why when the checks failed', async () => {
     await setup({ vision: false })
     const bot = app.bot()
-    expect(await bot.receive(`ai吗${image()}`)).toEqual(['<quote id="message-1"/>未检出支持的 AI 水印，不能据此确认是人工图片。'])
+    expect(await bot.receive(`ai吗${image()}`)).toEqual(['<quote id="message-1"/>没有找到 AI 特征，但不能完全确认不是 AI。'])
     provenance = { status: 401, json: { error: { message: 'Incorrect API key provided' } } }
     expect(await bot.receive(`ai吗${image()}`)).toEqual(['<quote id="message-2"/>API Key 无效或没有权限。'])
   })
@@ -287,7 +287,7 @@ describe('SynthID integration', () => {
       return { status: 'detected', source: 'google', confidence: 'high' }
     })
     await setup({ synthid: enabled })
-    expect(await app.bot().receive('ai吗' + image())).toEqual(['<quote id="message-1"/>SynthID 检出来自 Google 的 AI 生成标记。水印置信度：高。'])
+    expect(await app.bot().receive('ai吗' + image())).toEqual(['<quote id="message-1"/>图片是 Google 生成'])
     expect(synthid).toHaveBeenCalledTimes(1)
     expect(fake.calls.filter(call => call.path === '/img.png')).toHaveLength(1)
     expect(fake.calls.some(call => call.path.startsWith('/vision/'))).toBe(false)
@@ -304,7 +304,7 @@ describe('SynthID integration', () => {
     provenance = { status: 401 }
     synthid.mockResolvedValue({ status: 'detected', source: 'openai', confidence: 'high' })
     await setup({ synthid: enabled })
-    expect(await app.bot().receive('ai吗' + image())).toEqual([expect.stringContaining('SynthID 检出来自 OpenAI 的 AI 生成标记')])
+    expect(await app.bot().receive('ai吗' + image())).toEqual(['<quote id="message-1"/>图片是 OpenAI 生成'])
   })
 
   it.each([
@@ -327,14 +327,14 @@ describe('SynthID integration', () => {
 
   it('works with both other detectors disabled and no configured AI services', async () => {
     await setup({ provenance: false, synthid: enabled, vision: false }, '', false, [], true)
-    expect(await app.bot().receive('ai吗' + image())).toEqual([expect.stringContaining('SynthID 检出来自 Google')])
+    expect(await app.bot().receive('ai吗' + image())).toEqual([expect.stringContaining('图片是 Google 生成')])
     expect(fake.calls.some(call => call.path.startsWith('/vision/') || call.path.startsWith('/openai/'))).toBe(false)
   })
 
   it('does not call an unmarked image human-made', async () => {
     synthid.mockResolvedValue({ status: 'not_detected' })
     await setup({ provenance: false, synthid: enabled, vision: false })
-    expect(await app.bot().receive('ai吗' + image())).toEqual(['<quote id="message-1"/>未检出支持的 AI 水印，不能据此确认是人工图片。'])
+    expect(await app.bot().receive('ai吗' + image())).toEqual(['<quote id="message-1"/>没有找到 AI 特征，但不能完全确认不是 AI。'])
   })
 
   it('explains why SynthID could not decide when vision is off', async () => {
@@ -482,7 +482,7 @@ describe('configuration updates', () => {
     expect(visionCall.json.model).toBe('vision-large')
     expect(synthid).toHaveBeenCalledTimes(1)
     await fiber.update(AiImgDetector.Config(detectionOnly))
-    expect(await bot.receive('ai吗' + image())).toEqual([expect.stringContaining('SynthID 检出来自 Google')])
+    expect(await bot.receive('ai吗' + image())).toEqual([expect.stringContaining('图片是 Google 生成')])
     expect(synthid.mock.contexts[1]).toBe(synthid.mock.contexts[0])
     expect(dispose).not.toHaveBeenCalled()
   })

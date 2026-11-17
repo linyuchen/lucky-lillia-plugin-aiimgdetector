@@ -5,12 +5,18 @@ import { setTimeout as delay } from 'node:timers/promises'
 import type { Context, Http } from '@luckylillia/plugin-sdk'
 import type { Image } from './image.js'
 import { launchSynthIdBrowser, type SynthIdBrowserSession } from './synthid-browser.js'
-import { ManualSynthIdClient, synthIdCredentialIdentity, type ManualSynthIdCredentials, type SynthIdCredentialIdentity } from './synthid-manual.js'
+import { HttpSynthIdClient, type HttpSynthIdOptions } from './synthid-http.js'
 import { describeSynthIdFailure, SynthIdError, type SynthIdResult } from './synthid-result.js'
 
 export interface SynthIdConfig {
   timeout: number
-  credentials?: false | ManualSynthIdCredentials
+  credentials?: false | SynthIdCredentials
+}
+export interface SynthIdCredentials { refreshToken: string; pushFilename?: string; bgToken?: string }
+
+/** Test seam: replaces the generated browser-free runtime entry module. */
+export interface SynthIdClientOptions {
+  loadRuntime?: HttpSynthIdOptions['loadRuntime']
 }
 export interface SynthIdStatus {
   state: 'logged-out' | 'opening' | 'awaiting-login' | 'capturing' | 'ready' | 'error'
@@ -21,7 +27,7 @@ export interface SynthIdStatus {
 
 interface CapturedCredentials {
   revision: string
-  credentials: ManualSynthIdCredentials
+  credentials: SynthIdCredentials
 }
 
 // All entries in one instance share a profile and queue. The last owner closes
@@ -40,9 +46,6 @@ class ManagedSession {
   // A failed initialization is not evidence that the recognized account logged out.
   // Keep only a sanitized, transient error; never persist it or return failed credentials.
   private initializationFailure?: SynthIdError
-  // Retain origin bindings even after logout, so saved browser-filled values
-  // never silently become a static HTTP replay on the next request or reload.
-  private readonly browserCredentialKeys = new Set<string>()
   private browser?: SynthIdBrowserSession
   private browserProxy?: string
   private launch?: Promise<SynthIdBrowserSession>
@@ -66,18 +69,11 @@ class ManagedSession {
     await mkdir(this.root, { recursive: true, mode: 0o700 })
     try {
       const saved = JSON.parse(await readFile(this.stateFile, 'utf8'))
-      if (Array.isArray(saved?.browserCredentialKeys)) {
-        for (const key of saved.browserCredentialKeys) {
-          if (typeof key === 'string' && /^[a-f0-9]{64}$/.test(key)) this.browserCredentialKeys.add(key)
-        }
-      }
       if (saved?.loggedIn === true && typeof saved.account === 'string') {
         this.state = { state: 'ready', account: saved.account, message: '已保存登录状态' }
         if (typeof saved.captured?.revision === 'string' && validCredentials(saved.captured.credentials)) {
           this.captured = saved.captured
           this.state.credentialRevision = this.captured!.revision
-          const identity = synthIdCredentialIdentity(this.captured!.credentials)
-          if (identity) this.browserCredentialKeys.add(identity.key)
         }
       }
     } catch { this.state = { state: 'logged-out' } }
@@ -102,8 +98,6 @@ class ManagedSession {
   }
 
   private async save(account: string, captured: CapturedCredentials): Promise<void> {
-    const identity = synthIdCredentialIdentity(captured.credentials)
-    if (identity) this.browserCredentialKeys.add(identity.key)
     await this.writeState({ loggedIn: true, account, captured })
   }
 
@@ -111,7 +105,7 @@ class ManagedSession {
     const temporary = this.stateFile + '.' + randomUUID() + '.tmp'
     try {
       // Keep the captured form values private, alongside our isolated browser profile.
-      await writeFile(temporary, JSON.stringify({ ...value, browserCredentialKeys: [...this.browserCredentialKeys] }), { encoding: 'utf8', mode: 0o600, flag: 'wx' })
+      await writeFile(temporary, JSON.stringify(value), { encoding: 'utf8', mode: 0o600, flag: 'wx' })
       await rename(temporary, this.stateFile)
     } finally { await unlink(temporary).catch(() => {}) }
   }
@@ -120,8 +114,7 @@ class ManagedSession {
     this.state = { state: 'logged-out' }
     this.captured = undefined
     this.initializationFailure = undefined
-    if (this.browserCredentialKeys.size) await this.writeState({ loggedIn: false })
-    else await unlink(this.stateFile).catch(error => { if (error.code !== 'ENOENT') throw error })
+    await unlink(this.stateFile).catch(error => { if (error.code !== 'ENOENT') throw error })
   }
 
   private async open(headed: boolean, timeout: number): Promise<SynthIdBrowserSession> {
@@ -187,7 +180,7 @@ class ManagedSession {
         if (controller.signal.aborted || epoch !== this.epoch) return
         if (info.loggedIn && info.accepted) {
           const account = info.email || 'Google 账号'
-          this.state = { state: 'capturing', account, message: '已登录，正在使用内置测试图片获取检测凭证…' }
+          this.state = { state: 'capturing', account, message: '已登录，正在保存登录凭据…' }
           const credentials = await browser.captureCredentials(Math.max(timeout, 60_000))
           if (controller.signal.aborted || epoch !== this.epoch) return
           if (!validCredentials(credentials)) throw new SynthIdError('response', 'SynthID returned incomplete credentials')
@@ -197,9 +190,6 @@ class ManagedSession {
           this.captured = captured
           this.initializationFailure = undefined
           this.state = { state: 'ready', account, credentialRevision: captured.revision, message: '登录成功，已获取检测凭证。' }
-          // Keep the live page that completed the ordinary website flow. Its next
-          // upload uses the site's Back action, preserving transient login/page state.
-          keepBrowser = true
           return
         }
         await delay(1000, undefined, { signal: controller.signal })
@@ -270,18 +260,14 @@ class ManagedSession {
     return this.status()
   }
 
-  async detect(image: Image, timeout: number, signal: AbortSignal, manual?: ManualSynthIdClient, configuredIdentity?: SynthIdCredentialIdentity): Promise<SynthIdResult> {
+  async detect(image: Image, signal: AbortSignal, resolveClient: (credentials?: SynthIdCredentials) => Promise<HttpSynthIdClient>): Promise<SynthIdResult> {
     await this.ready
     await this.controls
     if (signal.aborted || this.closing) throw cancelled()
-    // Choose the credential source before any upload. Independently entered
-    // credentials remain usable without a browser or a saved browser login.
-    if (manual && (!configuredIdentity || !this.browserCredentialKeys.has(configuredIdentity.key))) {
-      return manual.detect(image)
-    }
+    // Detection is browser-free: a fresh challenge, an in-process interpreter
+    // run and a per-request verification token, all over plain HTTP.
     if (this.loginTask) throw new SynthIdError('busy', 'SynthID login is in progress')
-    const binding = configuredIdentity ?? (this.captured && synthIdCredentialIdentity(this.captured.credentials))
-    this.checkBinding(binding)
+    const http = await resolveClient(this.captured?.credentials)
     if (this.pending >= 4) throw new SynthIdError('busy', 'SynthID account queue is full')
     this.pending++
     let started = false
@@ -296,28 +282,10 @@ class ManagedSession {
       const input = queuedImage!
       queuedImage = undefined
       if (this.retryAt > Date.now()) throw new SynthIdError('rate-limit', 'SynthID account is cooling down', undefined, Math.ceil((this.retryAt - Date.now()) / 1000))
-      this.checkBinding(binding)
-      const browser = await this.open(false, timeout)
-      const abort = () => { void browser.close().catch(() => {}) }
-      signal.addEventListener('abort', abort, { once: true })
-      try {
-        if (signal.aborted) throw cancelled()
-        this.checkBinding(binding)
-        const result = await browser.detect(input, timeout, binding?.userId)
-        if (signal.aborted) throw cancelled()
-        if (result.status === 'quota_exceeded') this.retryAt = Date.now() + (result.retryAfterSeconds || 60) * 1000
-        return result
-      } catch (error) {
-        // A failed website operation must not leave its pending navigation or
-        // response listeners attached to a subsequent, different image.
-        await this.closeBrowser(browser).catch(() => {})
-        if (signal.aborted) throw cancelled()
-        if (error instanceof SynthIdError) {
-          if (error.kind === 'auth') await this.forget()
-          if (error.kind === 'rate-limit') this.retryAt = Date.now() + (error.retryAfterSeconds || 60) * 1000
-        }
-        throw error
-      } finally { signal.removeEventListener('abort', abort) }
+      const result = await http.detect(input, signal)
+      if (signal.aborted) throw cancelled()
+      if (result.status === 'quota_exceeded') this.retryAt = Date.now() + (result.retryAfterSeconds || 60) * 1000
+      return result
     })
     this.tail = task.then(release, release)
     let onCancel!: () => void
@@ -329,19 +297,7 @@ class ManagedSession {
     try { return await Promise.race([task, cancellation]) } finally {
       signal.removeEventListener('abort', onCancel)
       queuedImage = undefined
-      // Queued cancellations release memory/capacity immediately. An active
-      // operation keeps login/logout blocked until its browser has unwound.
       if (!started) release()
-    }
-  }
-
-  private checkBinding(binding?: SynthIdCredentialIdentity): void {
-    if (this.state.state !== 'ready') {
-      // Return a fresh error so callers cannot mutate the remembered classification.
-      throw safeInitializationError(this.initializationFailure) ?? new SynthIdError('auth', 'SynthID needs login')
-    }
-    if (binding && (!this.captured || synthIdCredentialIdentity(this.captured.credentials)?.key !== binding.key)) {
-      throw new SynthIdError('auth', 'SynthID configured browser credentials no longer match the saved session')
     }
   }
 
@@ -364,20 +320,21 @@ export class SynthIdClient {
   private readonly abort = new AbortController()
   private current!: {
     timeout: number
-    credentials?: ManualSynthIdCredentials
-    identity?: SynthIdCredentialIdentity
-    manual?: ManualSynthIdClient
+    credentials?: SynthIdCredentials
+    http?: HttpSynthIdClient
     scope?: ReturnType<Context['plugin']>
     users: number
     closing?: Promise<void>
   }
   private readonly configurations = new Set<SynthIdClient['current']>()
+  private readonly loadRuntime?: HttpSynthIdOptions['loadRuntime']
   private manager?: Promise<ManagedSession>
   private closing?: Promise<void>
   get disposed(): boolean { return this.abort.signal.aborted }
 
-  constructor(private readonly ctx: Context, config: SynthIdConfig) {
+  constructor(private readonly ctx: Context, config: SynthIdConfig, options: SynthIdClientOptions = {}) {
     this.http = ctx.http
+    this.loadRuntime = options.loadRuntime
     this.update(config)
     ctx.effect(() => () => this.dispose())
   }
@@ -385,24 +342,26 @@ export class SynthIdClient {
   update(config: SynthIdConfig): void {
     if (this.disposed) throw cancelled()
     const previous = this.current
-    const credentials = config.credentials && Object.values(config.credentials).some(value => typeof value === 'string' && value.trim())
-      ? { ...config.credentials } : undefined
-    if (previous && previous.timeout === config.timeout
-      && previous.credentials?.refreshToken === credentials?.refreshToken
-      && previous.credentials?.pushFilename === credentials?.pushFilename
-      && previous.credentials?.bgToken === credentials?.bgToken) return
+    // Only the login credential drives detection; a refresh token alone is enough.
+    const refreshToken = config.credentials && typeof config.credentials.refreshToken === 'string' && config.credentials.refreshToken.trim()
+      ? config.credentials.refreshToken.trim() : ''
+    if (previous && previous.timeout === config.timeout && previous.credentials?.refreshToken?.trim() === refreshToken) return
+    const credentials = refreshToken ? { refreshToken } : undefined
     const next: SynthIdClient['current'] = { timeout: config.timeout, credentials, users: 0 }
-    if (credentials) {
-      next.identity = synthIdCredentialIdentity(credentials)
-      // Each generation owns its effects; disposing it also unregisters the
-      // manual client's unload handler instead of accumulating saved secrets.
-      next.scope = this.ctx.plugin((ctx: Context) => {
-        next.manual = new ManualSynthIdClient(ctx, { ...credentials, timeout: next.timeout })
-      })
+    if (refreshToken) {
+      // Each generation owns its effects; disposing it also disposes the
+      // browser-free HTTP client and its in-flight generation workers.
+      this.createHttp(next, refreshToken)
     }
     this.current = next
     this.configurations.add(next)
     if (previous) void this.retire(previous)
+  }
+
+  private createHttp(settings: SynthIdClient['current'], refreshToken: string): void {
+    settings.scope = this.ctx.plugin({ inject: ['http'], apply: (ctx: Context) => {
+      settings.http = new HttpSynthIdClient(ctx, { refreshToken, timeout: settings.timeout, ...(this.loadRuntime ? { loadRuntime: this.loadRuntime } : {}) })
+    } })
   }
 
   private retire(settings: SynthIdClient['current']): Promise<void> {
@@ -413,7 +372,7 @@ export class SynthIdClient {
       finally {
         this.configurations.delete(settings)
         settings.credentials = undefined
-        settings.manual = undefined
+        settings.http = undefined
         settings.scope = undefined
       }
     })()
@@ -467,12 +426,24 @@ export class SynthIdClient {
     // Snapshot before either context initialization or the shared queue waits.
     // An update affects only subsequent requests, including credential identity.
     const settings = this.current
+    let fallback: SynthIdClient['current'] | undefined
     settings.users++
     try {
       await settings.scope
       if (this.disposed) throw cancelled()
-      return await (await this.session()).detect({ ...image, type: mime }, settings.timeout, this.abort.signal, settings.manual, settings.identity)
+      return await (await this.session()).detect({ ...image, type: mime }, this.abort.signal, async saved => {
+        if (!settings.http) {
+          if (!saved?.refreshToken) throw new SynthIdError('auth', 'SynthID needs a login credential (refresh_token)')
+          fallback = { timeout: settings.timeout, users: 1 }
+          this.configurations.add(fallback)
+          this.createHttp(fallback, saved.refreshToken)
+          await fallback.scope
+          return fallback.http!
+        }
+        return settings.http!
+      })
     } finally {
+      if (fallback) { fallback.users--; await this.retire(fallback) }
       settings.users--
       await this.retire(settings)
     }
@@ -507,10 +478,10 @@ function safeError(error: unknown): string {
   return error instanceof SynthIdError ? describeSynthIdFailure(error) : '无法启动或保存 SynthID 登录，请检查浏览器、网络和插件数据目录。'
 }
 
-function validCredentials(value: unknown): value is ManualSynthIdCredentials {
+function validCredentials(value: unknown): value is SynthIdCredentials {
   if (!value || typeof value !== 'object') return false
   const fields = value as Record<string, unknown>
-  return ['refreshToken', 'pushFilename', 'bgToken'].every(key => typeof fields[key] === 'string' && !!fields[key].trim())
+  return typeof fields.refreshToken === 'string' && /^[\x21-\x7e]+$/.test(fields.refreshToken.trim())
 }
 
 /** Protected by host WebUI authentication. Status never includes credentials. */

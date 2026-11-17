@@ -9,6 +9,8 @@ import { setTimeout as delay } from 'node:timers/promises'
 // Real Chromium transport, synthetic account and loopback-only fixture servers.
 // Only the service origin/import locations change; production launch flags stay intact.
 const sourceRuntime = process.argv.includes('--source')
+const nativeUi = process.argv.includes('--native-ui')
+if (nativeUi) assert.equal(process.platform, 'win32', '--native-ui requires an interactive Windows desktop')
 const originalUrl = new URL(sourceRuntime ? '../src/synthid-browser.ts' : '../lib/synthid-browser.js', import.meta.url)
 const originalSource = await readFile(originalUrl, 'utf8')
 assert.match(originalSource, /http\.proxy/, 'Build the native proxy implementation before running this test')
@@ -80,22 +82,26 @@ async function waitFor(condition, label, server) {
   assert.ok(condition(), label)
 }
 
-function fixtureHtml() {
+function fixtureHtml(nativeUi = false) {
   return '<!doctype html><sid-account-avatar><span class="profile-image">L</span></sid-account-avatar>'
     + '<input type="file" hidden><button>Select file</button><iframe src="/frame"></iframe><script>'
     + 'window.WIZ_global_data={yeeU8:{isLoggedIn:false}};'
     + 'localStorage.setItem("firstTime",JSON.stringify({termsAccepted:true}));'
     + 'window.firebase={apps:[{auth:()=>({currentUser:{uid:"native-synthetic-user",email:"synthetic@example.test",isAnonymous:false,refreshToken:"synthetic-refresh"}})}]};'
-    + 'document.querySelector("button").onclick=()=>{window.clicked=true;document.querySelector("input").click();};'
-    + 'document.querySelector("input").onchange=async e=>{const file=e.target.files[0];'
-    + 'await fetch("/upload",{method:"POST",headers:{"x-normal-button":String(window.clicked===true),"x-file-name":file.name},body:file});'
+    + (nativeUi ? 'window.mouseEvents=[];for(const type of ["pointerdown","mousedown","pointerup","mouseup","click"])document.querySelector("button").addEventListener(type,e=>window.mouseEvents.push([e.type,e.isTrusted]),true);' : '')
+    + 'document.querySelector("button").onclick=()=>{window.clicked=true;window.fileEvents=[];document.querySelector("input").click();};'
+    + 'document.querySelector("input").oninput=e=>window.fileEvents.push([e.type,e.isTrusted]);'
+    + 'document.querySelector("input").onchange=async e=>{window.fileEvents.push([e.type,e.isTrusted]);const file=e.target.files[0];'
+    + 'await fetch("/upload",{method:"POST",headers:{"x-normal-button":String(window.clicked===true),"x-file-name":file.name,"x-file-events":JSON.stringify(window.fileEvents)'
+    + (nativeUi ? ',"x-native-mouse-events":JSON.stringify(window.mouseEvents)' : '')
+    + '},body:file});'
     + 'await fetch("/_/WatermarkApp/data/batchexecute?rpcids=TZRKo",{method:"POST",body:new URLSearchParams({"f.req":JSON.stringify([[["TZRKo","synthetic-native-upload",null,"generic"]]])})});};'
     + 'const worker=new SharedWorker("/native-shared-worker.js");'
     + 'worker.port.onmessage=e=>fetch("/worker-report",{method:"POST",body:e.data});worker.port.start();'
     + '</script>'
 }
 
-async function nativeScenario(authenticated) {
+async function nativeScenario(authenticated, nativeUi = false) {
   const observations = { requests: [], uploads: [], workerReports: [], workerPending: 0, workerClosed: 0, authChallenges: 0 }
   const expectedAuthorization = 'Basic ' + Buffer.from('synthetic-user:synthetic-password').toString('base64')
   const proxy = await startServer(async (request, response) => {
@@ -119,7 +125,7 @@ async function nativeScenario(authenticated) {
     if (target.pathname === '/welcome') {
       assert.match(headers.cookie || '', /first=one/)
       assert.match(headers.cookie || '', /second=two/)
-      response.writeHead(200, { 'content-type': 'text/html' }).end(fixtureHtml())
+      response.writeHead(200, { 'content-type': 'text/html' }).end(fixtureHtml(nativeUi))
       return
     }
     if (target.pathname === '/frame') {
@@ -154,6 +160,10 @@ async function nativeScenario(authenticated) {
     }
     if (target.pathname === '/upload') {
       assert.equal(headers['x-normal-button'], 'true')
+      assert.deepEqual(JSON.parse(headers['x-file-events']), [['input', true], ['change', true]], 'Native proxy image selection must dispatch browser-trusted input/change events in order')
+      if (nativeUi) assert.deepEqual(JSON.parse(headers['x-native-mouse-events']), [
+        ['pointerdown', true], ['mousedown', true], ['pointerup', true], ['mouseup', true], ['click', true],
+      ], 'The native Windows upload must click the page button through the normal trusted pointer/mouse sequence')
       assert.equal(headers['x-file-name'], 'image.png')
       assert.equal(headers['content-type'], 'image/png')
       observations.uploads.push(await body(request))
@@ -182,14 +192,14 @@ async function nativeScenario(authenticated) {
     const { launchSynthIdBrowser } = await fixtureModule(fixtureOrigin)
     session = await launchSynthIdBrowser({
       profileDir: join(testRoot, authenticated ? 'authenticated-profile' : 'native-profile'),
-      headed: false, timeout: 10000, signal: new AbortController().signal,
+      headed: nativeUi, timeout: nativeUi ? 15000 : 10000, signal: new AbortController().signal,
       http: {
         proxy(url) { resolutionCalls.push(String(url)); return proxyAddress.href },
         async fetch() { bridgedCalls++; throw new Error('Native browser traffic must not use the HTTP bridge') },
       },
     })
     assert.deepEqual(await session.account(), { loggedIn: true, email: 'synthetic@example.test', accepted: true })
-    assert.deepEqual(await session.detect({ data: imageBytes.buffer, type: 'image/png' }, 5000, 'native-synthetic-user'), { status: 'not_detected' })
+    assert.deepEqual(await session.detect({ data: imageBytes.buffer, type: 'image/png' }, nativeUi ? 20000 : 5000, 'native-synthetic-user'), { status: 'not_detected' })
     await waitFor(() => observations.workerReports.length > 0 && observations.workerPending > 0, 'SharedWorker must reach the proxy', proxy)
     assert.deepEqual(resolutionCalls, [fixtureOrigin])
     assert.equal(bridgedCalls, 0)
@@ -211,8 +221,13 @@ async function nativeScenario(authenticated) {
     await session.close()
     await waitFor(() => observations.workerPending === 0, 'Browser closure must end pending SharedWorker traffic', proxy)
     assert.equal(observations.workerClosed, 1)
+    if (nativeUi) {
+      assert.equal(session.isClosed(), true)
+      await assert.rejects(session.detect({ data: imageBytes.buffer, type: 'image/png' }, 1000, 'native-synthetic-user'), error => error.kind === 'cancelled')
+      assert.equal(observations.uploads.length, 1, 'Closed native UI session must reject reuse before another upload')
+    }
     proxy.assertHealthy()
-    console.log('PASS: ' + (authenticated ? 'authenticated' : 'plain') + ' native proxy preserves Chromium metadata, original File bytes, iframe/SharedWorker traffic, redirect cookies and cancellation; HTTP bridge is unused')
+    console.log('PASS: ' + (nativeUi ? 'Windows headed native UI and ' : '') + (authenticated ? 'authenticated' : 'plain') + ' native proxy preserves Chromium metadata, trusted input/change events, original File bytes, iframe/SharedWorker traffic, redirect cookies and cancellation; HTTP bridge is unused')
   } finally {
     await session?.close()
     await proxy.close()
@@ -258,11 +273,13 @@ async function brokenProxyScenario() {
   }
 }
 
-console.log('Testing native SynthID browser proxy from ' + (sourceRuntime ? 'TypeScript source' : 'compiled JavaScript'))
+console.log('Testing native SynthID browser proxy from ' + (sourceRuntime ? 'TypeScript source' : 'compiled JavaScript') + (nativeUi ? ' with the Windows system click and file dialog' : ''))
 try {
-  await nativeScenario(false)
-  await nativeScenario(true)
-  await brokenProxyScenario()
+  await nativeScenario(false, nativeUi)
+  if (!nativeUi) {
+    await nativeScenario(true)
+    await brokenProxyScenario()
+  }
 } finally {
   const resolvedRoot = await realpath(testRoot)
   assert.equal(dirname(resolvedRoot), await realpath(tmpdir()))

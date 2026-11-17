@@ -1,11 +1,13 @@
 import { existsSync } from 'node:fs'
-import { mkdir } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rmdir, unlink, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { createServer } from 'node:net'
 import { setTimeout as delay } from 'node:timers/promises'
-import type { Browser, BrowserContext, FileChooser, Page, Request as BrowserRequest, Response as BrowserResponse } from 'playwright-core'
+import type { Browser, BrowserContext, CDPSession, FileChooser, Page, Request as BrowserRequest, Response as BrowserResponse } from 'playwright-core'
 import type { Http } from '@luckylillia/plugin-sdk'
 import type { Image } from './image.js'
 import type { ManualSynthIdCredentials } from './synthid-manual.js'
@@ -63,6 +65,24 @@ function browserExecutable(): string {
   const executable = paths.find(path => existsSync(path))
   if (!executable) throw new SynthIdError('config', 'SynthID needs an installed Chrome, Edge, or Chromium browser')
   return executable
+}
+
+/** Use the owned Windows browser's normal mouse and file picker, without injecting page events. */
+function nativeInput(action: 'click' | 'select', processId: number, file: string | undefined, timeout: number, signal: AbortSignal, cancel = false): Promise<void> {
+  if (signal.aborted) return Promise.reject(new SynthIdError('cancelled', 'SynthID file selection was cancelled'))
+  const executable = join(process.env.SystemRoot || 'C:/Windows', 'System32/WindowsPowerShell/v1.0/powershell.exe')
+  const args = [
+    '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+    '-File', fileURLToPath(new URL('../assets/synthid-native-' + action + '.ps1', import.meta.url)),
+    '-BrowserProcessId', String(processId), '-TimeoutSeconds', String(Math.max(1, Math.min(120, Math.ceil(timeout / 1000)))),
+    ...(file ? ['-FilePath', file] : []), ...(cancel ? ['-Cancel'] : []),
+  ]
+  return new Promise<void>((resolve, reject) => {
+    const helper = spawn(executable, args, { stdio: 'ignore', windowsHide: true, signal })
+    let failed = false
+    helper.once('error', () => { failed = true })
+    helper.once('close', code => !failed && code === 0 ? resolve() : reject(new SynthIdError('request', 'SynthID native file selection failed')))
+  })
 }
 
 function failure(error: unknown, closed: boolean): SynthIdError {
@@ -352,7 +372,7 @@ async function detectionCredentials(response: BrowserResponse): Promise<{ pushFi
 }
 
 /** Read only the refresh token for the UID actually used by the successful detection. */
-async function readRefreshToken(page: Page, userId: string): Promise<string> {
+async function readRefreshToken(page: Page, userId?: string): Promise<string> {
   const token = await page.evaluate<string>(refreshTokenScript + '(' + JSON.stringify(userId) + ')')
   if (!/^[\x21-\x7e]+$/.test(token)) throw new SynthIdError('auth', 'SynthID did not provide a reusable login credential')
   return token
@@ -422,7 +442,9 @@ export async function launchSynthIdBrowser(options: SynthIdBrowserOptions): Prom
     ], { stdio: 'ignore', windowsHide: !headed })
     childDone = new Promise(resolve => { child!.once('exit', () => resolve()); child!.once('error', () => resolve()) })
     const endpoint = await browserEndpoint(port, child, abort.signal, timeout)
-    nativeBrowser = await chromium.connectOverCDP(endpoint, { timeout })
+    // We spawned this browser locally. Without isLocal, Playwright converts file paths
+    // back into in-memory payloads, losing native file selection events.
+    nativeBrowser = await chromium.connectOverCDP(endpoint, { timeout, isLocal: true })
     context = nativeBrowser.contexts()[0]
     if (!context) throw new Error('Browser context missing')
     if (closed || signal.aborted) {
@@ -442,6 +464,7 @@ export async function launchSynthIdBrowser(options: SynthIdBrowserOptions): Prom
     await landing.locator('input[type="file"]').first().waitFor({ state: 'attached', timeout })
     starting = false
     const browser = context
+    const nativeUi = process.platform === 'win32' && headed
     let uploadBusy = false
     let uploadUnavailable = false
     const account = async () => {
@@ -474,6 +497,16 @@ export async function launchSynthIdBrowser(options: SynthIdBrowserOptions): Prom
       let chooser: FileChooser | undefined
       let clickTask: Promise<void> | undefined
       let clickDone = false
+      let prepareTask: Promise<string> | undefined
+      let setFilesTask: Promise<void> | undefined
+      let uploadDirectory: string | undefined
+      let uploadPath: string | undefined
+      let nativeTask: Promise<void> | undefined
+      let nativePageTask: Promise<CDPSession> | undefined
+      let nativePage: CDPSession | undefined
+      let nativeClickStarted = false
+      const nativeAbort = new AbortController()
+      const nativeSignal = AbortSignal.any([closing.signal, nativeAbort.signal])
       let onCancel: () => void = () => {}
       let resolveChooser!: (value: FileChooser) => void
       let resolveResponse!: (value: BrowserResponse) => void
@@ -536,19 +569,41 @@ export async function launchSynthIdBrowser(options: SynthIdBrowserOptions): Prom
         remaining()
         await capturePage.bringToFront()
         remaining()
-        const file = await prepareFile(capturePage)
+        // FilePayload makes Playwright inject a File and synthetic input/change events.
+        // A disk path lets Chromium select the file and emit its native events instead.
+        prepareTask = (async () => {
+          const file = await prepareFile(capturePage)
+          remaining()
+          uploadDirectory = await mkdtemp(join(tmpdir(), 'synthid-upload-'))
+          uploadPath = join(uploadDirectory, file.name)
+          await writeFile(uploadPath, file.buffer, { flag: 'wx', mode: 0o600 })
+          return uploadPath
+        })()
+        const file = await prepareTask
         remaining()
-        const chosen = new Promise<FileChooser>(resolve => { resolveChooser = resolve })
         const response = new Promise<BrowserResponse>(resolve => { resolveResponse = resolve })
-        capturePage.on('filechooser', onChooser)
         capturePage.on('request', onRequest)
         capturePage.on('response', onResponse)
-        // Follow the page's ordinary button handler before supplying this upload's file.
-        clickTask = select.click({ timeout: Math.min(1000, remaining()), noWaitAfter: true })
-        void clickTask.finally(() => { clickDone = true }).catch(() => {})
-        await clickTask
-        remaining()
-        const selection = await chosen
+        let selection: FileChooser | undefined
+        if (nativeUi) {
+          nativePageTask = browser.newCDPSession(capturePage)
+          nativePage = await nativePageTask
+          remaining()
+          await nativePage.send('Page.setInterceptFileChooserDialog', { enabled: false })
+          remaining()
+          nativeClickStarted = true
+          nativeTask = nativeInput('click', child!.pid!, undefined, remaining(), nativeSignal)
+          await nativeTask
+        } else {
+          const chosen = new Promise<FileChooser>(resolve => { resolveChooser = resolve })
+          capturePage.on('filechooser', onChooser)
+          // Follow the page's ordinary button handler before supplying this upload's file.
+          clickTask = select.click({ timeout: Math.min(1000, remaining()), noWaitAfter: true })
+          void clickTask.finally(() => { clickDone = true }).catch(() => {})
+          await clickTask
+          remaining()
+          selection = await chosen
+        }
         remaining()
         const selectedUserId = await capturePage.evaluate<string | undefined>(`(() => {
           const user = window.firebase?.apps?.[0]?.auth?.().currentUser;
@@ -557,7 +612,13 @@ export async function launchSynthIdBrowser(options: SynthIdBrowserOptions): Prom
         remaining()
         if (selectedUserId !== userId) throw new SynthIdError('auth', 'SynthID account changed before upload')
         submitted = true
-        await selection.setFiles(file, { timeout: remaining() })
+        if (nativeUi) {
+          nativeTask = nativeInput('select', child!.pid!, file, remaining(), nativeSignal)
+          await nativeTask
+        } else {
+          setFilesTask = selection!.setFiles(file, { timeout: remaining() })
+          await setFilesTask
+        }
         remaining()
         const result = await response
         remaining()
@@ -580,6 +641,7 @@ export async function launchSynthIdBrowser(options: SynthIdBrowserOptions): Prom
         throw failure(error, closed || closing.signal.aborted || capturePage.isClosed())
       } finally {
         finished = true
+        nativeAbort.abort()
         uploadBusy = false
         // A delayed website response after failure must never satisfy a subsequent attempt.
         // The manager reopens this persistent profile for the next separate detection job or login retry.
@@ -597,33 +659,30 @@ export async function launchSynthIdBrowser(options: SynthIdBrowserOptions): Prom
         // If cancellation races the short native click, intercept and dismiss its late chooser.
         if (clickTask && !clickDone) void clickTask.catch(() => {}).finally(releaseChooser)
         else releaseChooser()
+        // Preparation can still finish after cancellation. Keep the file available until
+        // native selection settles, then remove only this upload's file and empty directory.
+        await prepareTask?.catch(() => {})
+        await setFilesTask?.catch(() => {})
+        await nativeTask?.catch(() => {})
+        // The helper posts Open asynchronously; a failed upload can still have a picker open.
+        if (nativeClickStarted && !completed && !closed && !closing.signal.aborted) {
+          await nativeInput('select', child!.pid!, undefined, 1000, AbortSignal.timeout(3000), true).catch(() => {})
+        }
+        await nativePageTask?.catch(() => {})
+        await nativePage?.detach().catch(() => {})
+        if (uploadPath) await unlink(uploadPath).catch(() => {})
+        if (uploadDirectory) await rmdir(uploadDirectory).catch(() => {})
       }
     }
     return {
       account, close, isClosed: () => closed,
-      captureCredentials(captureTimeout) {
-        return upload(captureTimeout, async page => {
-          // Only generated colour tiles are uploaded. No screenshot, user file or page content is read.
-          const png = await page.evaluate(() => {
-            const canvas = document.createElement('canvas')
-            canvas.width = canvas.height = 512
-            const painter = canvas.getContext('2d')!
-            for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) {
-              painter.fillStyle = 'hsl(' + (x * 31 + y * 47) % 360 + ' 65% ' + (35 + (x + y) % 4 * 10) + '%)'
-              painter.fillRect(x * 32, y * 32, 32, 32)
-            }
-            return canvas.toDataURL('image/png').split(',')[1]
-          })
-          return { name: 'synthid-login-check.png', mimeType: 'image/png', buffer: Buffer.from(png, 'base64') }
-        }, async (response, result, userId, remaining) => {
-          if (result.status === 'quota_exceeded') throw new SynthIdError('rate-limit', 'SynthID detection quota was exceeded', undefined, result.retryAfterSeconds)
-          const credentials = await detectionCredentials(response)
-          remaining()
-          if (credentials.userId !== userId) throw new SynthIdError('auth', 'SynthID account changed during credential capture')
-          const refreshToken = await readRefreshToken(response.frame().page(), credentials.userId)
-          remaining()
-          return { refreshToken, pushFilename: credentials.pushFilename, bgToken: credentials.bgToken }
-        })
+      async captureCredentials(_captureTimeout) {
+        if (closed) throw new SynthIdError('cancelled', 'SynthID browser was closed')
+        const page = browser.pages().find(isSynthIdPage)
+        if (!page || closed) throw new SynthIdError('auth', 'Sign in to SynthID first')
+        const info = await readAccount(page)
+        if (!info.loggedIn || !info.accepted) throw new SynthIdError('auth', 'Complete SynthID sign-in first')
+        return { refreshToken: await readRefreshToken(page), pushFilename: '', bgToken: '' }
       },
       async bringToFront() {
         if (closed) throw new SynthIdError('cancelled', 'SynthID browser was closed')

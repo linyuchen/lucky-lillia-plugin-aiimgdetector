@@ -42,14 +42,14 @@ export const Config: Schema<Config> = Schema.object({
       credentials: Schema.union([
         Schema.object({
           refreshToken: Schema.string().role('secret').default('').description('登录凭据（refresh_token）'),
-          pushFilename: Schema.string().role('secret').default('').description('上传标识（push_filename）：复制网站请求中的值，不是本机文件夹'),
-          bgToken: Schema.string().role('secret').default('').description('网页校验凭据：可粘贴 x-goog-ext-525006476-jspb 请求头的完整 JSON 数组'),
+          pushFilename: Schema.string().role('secret').default('').hidden(),
+          bgToken: Schema.string().role('secret').default('').hidden(),
         }),
         // Migrate the previous browser/manual switch without losing saved secrets.
         Schema.transform(Schema.const(false).hidden(), () => ({ refreshToken: '', pushFilename: '', bgToken: '' })),
       ]).default({ refreshToken: '', pushFilename: '', bgToken: '' }).description('登录凭证'),
     }).description('用'),
-  ]).default(false).description('SynthID 检测, 支持检测 图片、视频、音频'),
+  ]).default(false).description('SynthID 图片检测（纯 HTTP）'),
   vision: Schema.union([
     Schema.const(false).description('不用'),
     Schema.object({

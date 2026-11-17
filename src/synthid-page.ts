@@ -61,7 +61,7 @@ export const accountScript = String.raw`(async () => {
 export const refreshTokenScript = String.raw`(async uid => {
   ${liveUser}
   if (user?.uid) {
-    if (user.uid !== uid || user.isAnonymous) return '';
+    if (uid && user.uid !== uid || user.isAnonymous) return '';
     const token = user.refreshToken || user.stsTokenManager?.refreshToken;
     if (typeof token === 'string' && token) return token;
   }
@@ -93,7 +93,7 @@ export const refreshTokenScript = String.raw`(async uid => {
         if (!entry) { finish(); return; }
         const record = entry.value;
         const saved = record.value;
-        if (record.fbase_key?.startsWith('firebase:authUser:') && saved?.uid === uid && !saved.isAnonymous
+        if (record.fbase_key?.startsWith('firebase:authUser:') && saved?.uid && (!uid || saved.uid === uid) && !saved.isAnonymous
           && typeof saved.stsTokenManager?.refreshToken === 'string' && saved.stsTokenManager.refreshToken) {
           finish(saved.stsTokenManager.refreshToken);
         } else entry.continue();
