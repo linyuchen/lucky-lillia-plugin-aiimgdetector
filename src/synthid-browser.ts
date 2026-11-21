@@ -1,28 +1,20 @@
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, readFile, rmdir, unlink, writeFile } from 'node:fs/promises'
+import { mkdir } from 'node:fs/promises'
 import { createRequire } from 'node:module'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { createServer } from 'node:net'
 import { setTimeout as delay } from 'node:timers/promises'
-import type { Browser, BrowserContext, CDPSession, FileChooser, Page, Request as BrowserRequest, Response as BrowserResponse } from 'playwright-core'
-import type { Http } from '@luckylillia/plugin-sdk'
-import type { Image } from './image.js'
+import type { Browser, BrowserContext, Page } from 'playwright-core'
+import type { Http } from '@luckylillia-dev/plugin-sdk'
 import type { ManualSynthIdCredentials } from './synthid-manual.js'
 import { accountScript, refreshTokenScript } from './synthid-page.js'
-import { parseSynthIdResponse, SynthIdError, type SynthIdNetworkCode, type SynthIdResult } from './synthid-result.js'
+import { SynthIdError, type SynthIdNetworkCode } from './synthid-result.js'
 
 const ORIGIN = 'https://synthid.com'
 // Keep Playwright's CommonJS bootstrap at its canonical path. The host's ESM
 // reload query must not propagate into the bundle's circular imports.
 const { chromium, errors } = createRequire(import.meta.url)('playwright-core') as typeof import('playwright-core')
-const EXTENSIONS: Record<string, string> = {
-  'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif',
-  'image/bmp': 'bmp', 'image/avif': 'avif', 'image/heic': 'heic', 'image/heif': 'heif', 'image/tiff': 'tiff',
-}
-
 export interface SynthIdBrowserAccount {
   loggedIn: boolean
   email?: string
@@ -33,7 +25,6 @@ export interface SynthIdBrowserSession {
   isClosed(): boolean
   account(): Promise<SynthIdBrowserAccount>
   captureCredentials(timeout: number): Promise<ManualSynthIdCredentials>
-  detect(image: Image, timeout: number, expectedUserId?: string): Promise<SynthIdResult>
   bringToFront(): Promise<void>
   close(): Promise<void>
 }
@@ -65,24 +56,6 @@ function browserExecutable(): string {
   const executable = paths.find(path => existsSync(path))
   if (!executable) throw new SynthIdError('config', 'SynthID needs an installed Chrome, Edge, or Chromium browser')
   return executable
-}
-
-/** Use the owned Windows browser's normal mouse and file picker, without injecting page events. */
-function nativeInput(action: 'click' | 'select', processId: number, file: string | undefined, timeout: number, signal: AbortSignal, cancel = false): Promise<void> {
-  if (signal.aborted) return Promise.reject(new SynthIdError('cancelled', 'SynthID file selection was cancelled'))
-  const executable = join(process.env.SystemRoot || 'C:/Windows', 'System32/WindowsPowerShell/v1.0/powershell.exe')
-  const args = [
-    '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
-    '-File', fileURLToPath(new URL('../assets/synthid-native-' + action + '.ps1', import.meta.url)),
-    '-BrowserProcessId', String(processId), '-TimeoutSeconds', String(Math.max(1, Math.min(120, Math.ceil(timeout / 1000)))),
-    ...(file ? ['-FilePath', file] : []), ...(cancel ? ['-Cancel'] : []),
-  ]
-  return new Promise<void>((resolve, reject) => {
-    const helper = spawn(executable, args, { stdio: 'ignore', windowsHide: true, signal })
-    let failed = false
-    helper.once('error', () => { failed = true })
-    helper.once('close', code => !failed && code === 0 ? resolve() : reject(new SynthIdError('request', 'SynthID native file selection failed')))
-  })
 }
 
 function failure(error: unknown, closed: boolean): SynthIdError {
@@ -324,54 +297,7 @@ function isSynthIdPage(page: Page): boolean {
   try { return !page.isClosed() && new URL(page.url()).origin === ORIGIN } catch { return false }
 }
 
-function isDetectionResponse(response: BrowserResponse): boolean {
-  const url = new URL(response.url())
-  return url.origin === ORIGIN && url.pathname === '/_/WatermarkApp/data/batchexecute'
-    && (url.searchParams.get('rpcids') || '').split(',').includes('TZRKo')
-    && response.request().method() === 'POST'
-}
-
-async function detectionResult(response: BrowserResponse): Promise<SynthIdResult> {
-  if (!response.ok()) {
-    const status = response.status()
-    const kind = status === 401 ? 'auth' : status === 403 ? 'permission'
-      : status === 429 ? 'rate-limit' : status >= 500 ? 'server' : 'request'
-    const retry = status === 429 ? await response.headerValue('retry-after') : undefined
-    const seconds = retry && (/^\d+(?:\.\d+)?$/.test(retry) ? Number(retry) : (Date.parse(retry) - Date.now()) / 1000)
-    throw new SynthIdError(kind, 'SynthID returned HTTP ' + status, status,
-      typeof seconds === 'number' && Number.isFinite(seconds) && seconds > 0 ? Math.ceil(seconds) : undefined)
-  }
-  return parseSynthIdResponse(await response.text())
-}
-
-/** Both values must come from this page's same detection request, never another tab or upload. */
-async function detectionCredentials(response: BrowserResponse): Promise<{ pushFilename: string; bgToken: string; userId: string }> {
-  try {
-    const request = response.request()
-    const header: unknown = JSON.parse(await request.headerValue('x-goog-ext-525006476-jspb') || 'null')
-    if (!Array.isArray(header) || typeof header[0] !== 'string' || typeof header[5] !== 'string'
-      || !/^![\x21-\x7e]+$/.test(header[5])) throw new Error()
-    const batches: unknown = JSON.parse(new URLSearchParams(request.postData() || '').get('f.req') || 'null')
-    if (!Array.isArray(batches)) throw new Error()
-    const calls = batches.flatMap(batch => Array.isArray(batch) ? batch : []).filter(
-      call => Array.isArray(call) && call[0] === 'TZRKo' && typeof call[1] === 'string',
-    )
-    if (calls.length !== 1) throw new Error()
-    const payload = JSON.parse(calls[0][1])
-    const blob = payload?.[1]?.[0]?.[0]?.[6]
-    if (typeof blob !== 'string') throw new Error()
-    const match = /^\/synthid-demo-drop-zone\/ttl_1d\/(users\/([A-Za-z0-9_-]+)\/files\/[A-Za-z0-9_-]+)$/.exec(blob)
-    if (!match) throw new Error()
-    const claims = JSON.parse(Buffer.from(header[0].split('.')[1], 'base64url').toString('utf8'))
-    if ((claims?.user_id ?? claims?.sub) !== match[2]
-      || claims.user_id && claims.sub && claims.user_id !== claims.sub) throw new Error()
-    return { pushFilename: match[1], bgToken: header[5], userId: match[2] }
-  } catch {
-    throw new SynthIdError('response', 'SynthID did not provide matching detection credentials')
-  }
-}
-
-/** Read only the refresh token for the UID actually used by the successful detection. */
+/** Read the refresh token only after the user completed the browser login. */
 async function readRefreshToken(page: Page, userId?: string): Promise<string> {
   const token = await page.evaluate<string>(refreshTokenScript + '(' + JSON.stringify(userId) + ')')
   if (!/^[\x21-\x7e]+$/.test(token)) throw new SynthIdError('auth', 'SynthID did not provide a reusable login credential')
@@ -442,9 +368,8 @@ export async function launchSynthIdBrowser(options: SynthIdBrowserOptions): Prom
     ], { stdio: 'ignore', windowsHide: !headed })
     childDone = new Promise(resolve => { child!.once('exit', () => resolve()); child!.once('error', () => resolve()) })
     const endpoint = await browserEndpoint(port, child, abort.signal, timeout)
-    // We spawned this browser locally. Without isLocal, Playwright converts file paths
-    // back into in-memory payloads, losing native file selection events.
-    nativeBrowser = await chromium.connectOverCDP(endpoint, { timeout, isLocal: true })
+    // Connect only to the browser process started above, on its loopback endpoint.
+    nativeBrowser = await chromium.connectOverCDP(endpoint, { timeout })
     context = nativeBrowser.contexts()[0]
     if (!context) throw new Error('Browser context missing')
     if (closed || signal.aborted) {
@@ -464,9 +389,6 @@ export async function launchSynthIdBrowser(options: SynthIdBrowserOptions): Prom
     await landing.locator('input[type="file"]').first().waitFor({ state: 'attached', timeout })
     starting = false
     const browser = context
-    const nativeUi = process.platform === 'win32' && headed
-    let uploadBusy = false
-    let uploadUnavailable = false
     const account = async () => {
       if (closed) throw new SynthIdError('cancelled', 'SynthID browser was closed')
       const page = browser.pages().find(isSynthIdPage)
@@ -475,203 +397,6 @@ export async function launchSynthIdBrowser(options: SynthIdBrowserOptions): Prom
         if (closed) throw failure(error, true)
         // OAuth redirects replace execution contexts; the login manager polls again after navigation.
         return { loggedIn: false, accepted: false }
-      }
-    }
-    const upload = async <T>(
-      uploadTimeout: number,
-      prepareFile: (page: Page) => Promise<{ name: string; mimeType: string; buffer: Buffer }>,
-      consume: (response: BrowserResponse, result: SynthIdResult, userId: string, remaining: () => number) => Promise<T>,
-      expectedUserId?: string,
-    ): Promise<T> => {
-      if (closed || closing.signal.aborted) throw new SynthIdError('cancelled', 'SynthID browser was closed')
-      if (uploadBusy) throw new SynthIdError('busy', 'SynthID website upload is already running')
-      if (uploadUnavailable) throw new SynthIdError('auth', 'Reopen SynthID before uploading again')
-      const capturePage = browser.pages().find(isSynthIdPage)
-      if (!capturePage) throw new SynthIdError('auth', 'Sign in to SynthID in the browser first')
-      uploadBusy = true
-      const deadline = Date.now() + uploadTimeout
-      let finished = false
-      let completed = false
-      let submitted = false
-      let timer: ReturnType<typeof setTimeout> | undefined
-      let chooser: FileChooser | undefined
-      let clickTask: Promise<void> | undefined
-      let clickDone = false
-      let prepareTask: Promise<string> | undefined
-      let setFilesTask: Promise<void> | undefined
-      let uploadDirectory: string | undefined
-      let uploadPath: string | undefined
-      let nativeTask: Promise<void> | undefined
-      let nativePageTask: Promise<CDPSession> | undefined
-      let nativePage: CDPSession | undefined
-      let nativeClickStarted = false
-      const nativeAbort = new AbortController()
-      const nativeSignal = AbortSignal.any([closing.signal, nativeAbort.signal])
-      let onCancel: () => void = () => {}
-      let resolveChooser!: (value: FileChooser) => void
-      let resolveResponse!: (value: BrowserResponse) => void
-      const requests = new Set<BrowserRequest>()
-      const remaining = () => {
-        if (closed || closing.signal.aborted || capturePage.isClosed()) throw new SynthIdError('cancelled', 'SynthID browser was closed')
-        const duration = deadline - Date.now()
-        if (finished || duration <= 0) throw new SynthIdError('timeout', 'SynthID website upload timed out')
-        return duration
-      }
-      const onChooser = (value: FileChooser) => {
-        if (finished) { void value.setFiles([]).catch(() => {}); return }
-        chooser = value
-        resolveChooser(value)
-      }
-      const onRequest = (request: BrowserRequest) => {
-        if (!submitted || finished) return
-        try {
-          const url = new URL(request.url())
-          if (request.frame().page() === capturePage && url.origin === ORIGIN
-            && url.pathname === '/_/WatermarkApp/data/batchexecute'
-            && (url.searchParams.get('rpcids') || '').split(',').includes('TZRKo')
-            && request.method() === 'POST') requests.add(request)
-        } catch {}
-      }
-      const onResponse = (response: BrowserResponse) => {
-        if (!finished && requests.has(response.request()) && isDetectionResponse(response)) resolveResponse(response)
-      }
-      const run = async (): Promise<T> => {
-        const select = capturePage.getByRole('button', { name: /^(Select file|选择文件)$/i }).first()
-        const avatar = capturePage.locator('sid-account-avatar .profile-image').first()
-        remaining()
-        if (!await select.isVisible() && /^\/image-detection\/?$/.test(new URL(capturePage.url()).pathname)) {
-          // The site's Back action clears its selected-file/result store while retaining live auth.
-          const back = capturePage.getByRole('link', { name: /\bBack\b|返回/i }).first()
-          await back.click({ timeout: remaining(), noWaitAfter: true })
-          remaining()
-        }
-        let userId: string | undefined
-        while (!userId) {
-          remaining()
-          const account = await readAccount(capturePage)
-          remaining()
-          // Firebase can finish restoring its live user after the page shell and file input mount.
-          // Keep this browser expression as text so the host's tsx helper is never serialized.
-          const liveUid = await capturePage.evaluate<string | undefined>(`(() => {
-            const user = window.firebase?.apps?.[0]?.auth?.().currentUser;
-            const token = user?.refreshToken || user?.stsTokenManager?.refreshToken;
-            return user?.uid && !user.isAnonymous && typeof token === 'string' && token ? user.uid : undefined;
-          })()`)
-          remaining()
-          if (liveUid && expectedUserId !== undefined && liveUid !== expectedUserId) {
-            throw new SynthIdError('auth', 'SynthID account does not match the configured login')
-          }
-          if (account.loggedIn && account.accepted && liveUid && await avatar.isVisible()
-            && await select.isVisible() && await select.isEnabled()) userId = liveUid
-          else await delay(Math.min(100, remaining()), undefined, { signal: closing.signal })
-        }
-        await readRefreshToken(capturePage, userId)
-        remaining()
-        await capturePage.bringToFront()
-        remaining()
-        // FilePayload makes Playwright inject a File and synthetic input/change events.
-        // A disk path lets Chromium select the file and emit its native events instead.
-        prepareTask = (async () => {
-          const file = await prepareFile(capturePage)
-          remaining()
-          uploadDirectory = await mkdtemp(join(tmpdir(), 'synthid-upload-'))
-          uploadPath = join(uploadDirectory, file.name)
-          await writeFile(uploadPath, file.buffer, { flag: 'wx', mode: 0o600 })
-          return uploadPath
-        })()
-        const file = await prepareTask
-        remaining()
-        const response = new Promise<BrowserResponse>(resolve => { resolveResponse = resolve })
-        capturePage.on('request', onRequest)
-        capturePage.on('response', onResponse)
-        let selection: FileChooser | undefined
-        if (nativeUi) {
-          nativePageTask = browser.newCDPSession(capturePage)
-          nativePage = await nativePageTask
-          remaining()
-          await nativePage.send('Page.setInterceptFileChooserDialog', { enabled: false })
-          remaining()
-          nativeClickStarted = true
-          nativeTask = nativeInput('click', child!.pid!, undefined, remaining(), nativeSignal)
-          await nativeTask
-        } else {
-          const chosen = new Promise<FileChooser>(resolve => { resolveChooser = resolve })
-          capturePage.on('filechooser', onChooser)
-          // Follow the page's ordinary button handler before supplying this upload's file.
-          clickTask = select.click({ timeout: Math.min(1000, remaining()), noWaitAfter: true })
-          void clickTask.finally(() => { clickDone = true }).catch(() => {})
-          await clickTask
-          remaining()
-          selection = await chosen
-        }
-        remaining()
-        const selectedUserId = await capturePage.evaluate<string | undefined>(`(() => {
-          const user = window.firebase?.apps?.[0]?.auth?.().currentUser;
-          return user && !user.isAnonymous ? user.uid : undefined;
-        })()`)
-        remaining()
-        if (selectedUserId !== userId) throw new SynthIdError('auth', 'SynthID account changed before upload')
-        submitted = true
-        if (nativeUi) {
-          nativeTask = nativeInput('select', child!.pid!, file, remaining(), nativeSignal)
-          await nativeTask
-        } else {
-          setFilesTask = selection!.setFiles(file, { timeout: remaining() })
-          await setFilesTask
-        }
-        remaining()
-        const result = await response
-        remaining()
-        const detected = await detectionResult(result)
-        remaining()
-        const output = await consume(result, detected, userId, remaining)
-        remaining()
-        completed = true
-        return output
-      }
-      try {
-        return await Promise.race([run(), new Promise<never>((_, reject) => {
-          onCancel = () => reject(new SynthIdError('cancelled', 'SynthID browser was closed'))
-          closing.signal.addEventListener('abort', onCancel, { once: true })
-          capturePage.on('close', onCancel)
-          timer = setTimeout(() => reject(new SynthIdError('timeout', 'SynthID website upload timed out')), Math.max(1, deadline - Date.now()))
-          if (closed || closing.signal.aborted || capturePage.isClosed()) onCancel()
-        })])
-      } catch (error) {
-        throw failure(error, closed || closing.signal.aborted || capturePage.isClosed())
-      } finally {
-        finished = true
-        nativeAbort.abort()
-        uploadBusy = false
-        // A delayed website response after failure must never satisfy a subsequent attempt.
-        // The manager reopens this persistent profile for the next separate detection job or login retry.
-        if (!completed) uploadUnavailable = true
-        clearTimeout(timer)
-        closing.signal.removeEventListener('abort', onCancel)
-        capturePage.off('close', onCancel)
-        capturePage.off('request', onRequest)
-        capturePage.off('response', onResponse)
-        requests.clear()
-        const releaseChooser = () => {
-          capturePage.off('filechooser', onChooser)
-          if (chooser && !submitted) void chooser.setFiles([]).catch(() => {})
-        }
-        // If cancellation races the short native click, intercept and dismiss its late chooser.
-        if (clickTask && !clickDone) void clickTask.catch(() => {}).finally(releaseChooser)
-        else releaseChooser()
-        // Preparation can still finish after cancellation. Keep the file available until
-        // native selection settles, then remove only this upload's file and empty directory.
-        await prepareTask?.catch(() => {})
-        await setFilesTask?.catch(() => {})
-        await nativeTask?.catch(() => {})
-        // The helper posts Open asynchronously; a failed upload can still have a picker open.
-        if (nativeClickStarted && !completed && !closed && !closing.signal.aborted) {
-          await nativeInput('select', child!.pid!, undefined, 1000, AbortSignal.timeout(3000), true).catch(() => {})
-        }
-        await nativePageTask?.catch(() => {})
-        await nativePage?.detach().catch(() => {})
-        if (uploadPath) await unlink(uploadPath).catch(() => {})
-        if (uploadDirectory) await rmdir(uploadDirectory).catch(() => {})
       }
     }
     return {
@@ -691,15 +416,6 @@ export async function launchSynthIdBrowser(options: SynthIdBrowserOptions): Prom
           const page = browser.pages().filter(page => !page.isClosed()).at(-1)
           if (page) await page.bringToFront()
         } catch (error) { throw failure(error, closed) }
-      },
-      async detect(image, detectionTimeout, expectedUserId) {
-        const extension = EXTENSIONS[image.type.toLowerCase()]
-        if (!extension || !image.data.byteLength || image.data.byteLength > 20 * 1024 * 1024) {
-          throw new SynthIdError('request', 'Unsupported SynthID image')
-        }
-        return upload(detectionTimeout, async () => ({
-          name: 'image.' + extension, mimeType: image.type, buffer: Buffer.from(image.data),
-        }), async (_response, result) => result, expectedUserId)
       },
     }
   } catch (error) {

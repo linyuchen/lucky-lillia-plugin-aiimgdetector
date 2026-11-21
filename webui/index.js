@@ -1,6 +1,6 @@
 // React and the SDK are provided by the host's import map; no separate frontend build.
 import { createContext, createElement as h, useContext, useEffect, useMemo, useRef, useState } from 'react'
-import { SchemaForm, usePluginContext, usePluginStatus } from '@luckylillia/plugin-sdk/webui'
+import { SchemaForm, usePluginContext, usePluginStatus } from '@luckylillia-dev/plugin-sdk/webui'
 
 const endpoint = '/api/aiimgdetector/synthid'
 const states = new Set(['logged-out', 'opening', 'awaiting-login', 'capturing', 'ready', 'error'])
@@ -160,7 +160,7 @@ function SynthIdAccount({ credentials, onCredentials }) {
         filled && h('p', { className: 'text-theme-secondary', role: 'status', style: muted },
           '凭证已自动填入，请点击弹窗底部「保存」。'),
         status?.state === 'ready' && h('p', { className: 'text-theme-muted', style: muted },
-          '登录窗口会保留供后续检测使用，保存凭证不会关闭它。清除会话不会删除下方凭证，但清除后需重新登录并保存自动填写的凭证。'),
+          '取得登录凭据后会关闭登录窗口，后续检测通过 HTTP 完成。清除浏览器会话不会删除下方已保存的凭证。'),
         h('div', { style: line },
           !error && status && !loggingIn && h('button', {
             type: 'button', className: 'btn-primary', disabled: busy, onClick: () => act('login'),

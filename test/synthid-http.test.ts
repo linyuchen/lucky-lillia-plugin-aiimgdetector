@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createTestApp, type TestApp } from '@luckylillia/plugin-sdk/testing'
+import { createTestApp, type TestApp } from '@luckylillia-dev/plugin-sdk/testing'
 import { HttpSynthIdClient } from '../src/synthid-http.js'
 import { SynthIdClient } from '../src/synthid.js'
 import { startFakeAi, PNG } from './fakeAi.js'

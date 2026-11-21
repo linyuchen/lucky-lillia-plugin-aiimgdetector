@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
-import { createTestApp, type TestApp } from '@luckylillia/plugin-sdk/testing'
-import * as Provider from '@luckylillia/plugin-aiprovider'
+import { createTestApp, type TestApp } from '@luckylillia-dev/plugin-sdk/testing'
+import * as Provider from '@luckylillia-dev/plugin-aiprovider'
 import * as AiImgDetector from '../src/index.js'
 import { completion, FakeAnswer, FakeCall, PNG, startFakeAi } from './fakeAi.js'
 import { SynthIdClient } from '../src/synthid.js'
@@ -26,8 +26,10 @@ async function setup(config: Partial<AiImgDetector.Config> = {}, defaultAi = 'Vi
   // Keep the real endpoint metadata, but route every official API request to the local fake.
   const fetch = app.ctx.http.fetch.bind(app.ctx.http)
   vi.spyOn(app.ctx.http, 'fetch').mockImplementation((url, init, options) => {
-    const local = typeof url === 'string' && url.startsWith('https://api.openai.com/v1/')
-      ? fake.url + '/openai/v1/' + url.slice('https://api.openai.com/v1/'.length) : url
+    const requested = String(url)
+    const local = requested === 'https://gchat.qpic.cn/fixture.png' ? fake.url + '/img.png'
+      : requested.startsWith('https://api.openai.com/v1/')
+        ? fake.url + '/openai/v1/' + requested.slice('https://api.openai.com/v1/'.length) : requested
     if (!String(local).startsWith(fake.url + '/')) throw new Error('unexpected external request in test')
     return fetch(local, init, options)
   })
@@ -43,7 +45,7 @@ async function setup(config: Partial<AiImgDetector.Config> = {}, defaultAi = 'Vi
   return app.ctx.plugin(AiImgDetector, { cooldown: 0, vision: { ai: '', model: '' }, ...config })
 }
 
-const image = () => `<img src="${fake.url}/img.png"/>`
+const image = () => '<img src="https://gchat.qpic.cn/fixture.png"/>'
 
 beforeEach(async () => {
   provenance = { json: { object: 'content_provenance_check', created_at: 1, results: [{ type: 'synthid', outcome: 'not_detected' }] } }
@@ -442,7 +444,7 @@ describe('configuration updates', () => {
 
   it('keeps the login route attached to the same client across saves and detection switches', async () => {
     let fetch!: (request: Request) => Promise<Response>
-    const route = vi.fn((_prefix: string, handler: { fetch: typeof fetch }) => {
+    const route = vi.fn((_prefix: string, handler: { fetch: typeof fetch }, _options?: { public?: boolean }) => {
       if (_prefix === '/api/aiimgdetector/synthid') fetch = handler.fetch
       return () => {}
     })
@@ -451,6 +453,7 @@ describe('configuration updates', () => {
     const login = vi.spyOn(SynthIdClient.prototype, 'login').mockResolvedValue({ state: 'opening' })
     const fiber = await setup(detectionOnly)
     await vi.waitFor(() => expect(fetch).toBeTypeOf('function'))
+    expect(route).toHaveBeenCalledWith('/api/aiimgdetector/synthid', expect.any(Object), { public: false })
     const statusRequest = () => fetch(new Request('http://localhost/api/aiimgdetector/synthid/status'))
     expect(await (await statusRequest()).json()).toMatchObject({ success: true, data: { state: 'ready' } })
     const initialClient = status.mock.contexts[0]

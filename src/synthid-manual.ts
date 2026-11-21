@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import type { Context } from '@luckylillia/plugin-sdk'
+import type { Context } from '@luckylillia-dev/plugin-sdk'
 import type { Image } from './image.js'
 import { describeSynthIdFailure, parseSynthIdResponse, SynthIdError, type SynthIdResult } from './synthid-result.js'
 

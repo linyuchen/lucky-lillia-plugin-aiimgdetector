@@ -21,8 +21,6 @@ const required = [
   manifest.llbot.webui,
   manifest.llbot.icon,
   'assets/synthid-login-check.jpg',
-  'assets/synthid-native-click.ps1',
-  'assets/synthid-native-select.ps1',
   ...['src', 'lib'].flatMap(root => [
     `${root}/synthid-http.${root === 'src' ? 'ts' : 'js'}`,
     ...['entry.mjs', 'lifecycle-client.mjs', 'lifecycle-worker.mjs', 'realm-init.js',
@@ -38,6 +36,7 @@ for (const path of required) {
   assert(files.has(path.replace(/^\.\//, '')), `Package is missing ${path}`)
 }
 for (const path of files) {
+  assert(!/^assets\/synthid-native-.*\.ps1$/i.test(path), `Package contains a removed desktop automation helper: ${path}`)
   assert(!/\.(?:node|wasm|exe|dll|so|dylib)$/i.test(path), `Package contains a native binary: ${path}`)
   assert(!/(^|\/)(?:node_modules|output|test|scripts|\.github|\.playwright-cli)(\/|$)/.test(path), `Unexpected packaged file: ${path}`)
   assert(!/(^|\/)\.env(?:\.|$)/.test(path), `Unexpected environment file: ${path}`)

@@ -1,7 +1,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createTestApp, type TestApp } from '@luckylillia/plugin-sdk/testing'
+import { createTestApp, type TestApp } from '@luckylillia-dev/plugin-sdk/testing'
 import { SynthIdClient, handleSynthId } from '../src/synthid.js'
 import { HttpSynthIdClient } from '../src/synthid-http.js'
 import { launchSynthIdBrowser } from '../src/synthid-browser.js'

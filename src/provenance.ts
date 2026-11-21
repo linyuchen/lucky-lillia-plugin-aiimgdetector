@@ -1,4 +1,4 @@
-import type { AiProvider } from '@luckylillia/plugin-aiprovider'
+import type { AiProvider } from '@luckylillia-dev/plugin-aiprovider'
 import type { Image } from './image.js'
 
 // The answer of OpenAI's content_provenance_checks

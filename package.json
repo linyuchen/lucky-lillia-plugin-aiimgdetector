@@ -1,6 +1,6 @@
 {
-  "name": "lucky-lillia-plugin-aiimgdetector",
-  "version": "1.0.3",
+  "name": "@luckylillia-dev/plugin-aiimgdetector",
+  "version": "1.0.4",
   "description": "Checks AI image provenance through OpenAI, optional SynthID detection, and a vision model",
   "author": "linyuchen",
   "repository": {
@@ -49,12 +49,12 @@
     "whatwg-url": "14.2.0"
   },
   "peerDependencies": {
-    "@luckylillia/plugin-aiprovider": "^1.0.0",
-    "@luckylillia/plugin-sdk": "^1.0.1"
+    "@luckylillia-dev/plugin-aiprovider": "^1.0.0",
+    "@luckylillia-dev/plugin-sdk": "^1.0.1"
   },
   "devDependencies": {
-    "@luckylillia/plugin-aiprovider": "^1.0.0",
-    "@luckylillia/plugin-sdk": "^1.0.1",
+    "@luckylillia-dev/plugin-aiprovider": "npm:@luckylillia/plugin-aiprovider@^1.0.0",
+    "@luckylillia-dev/plugin-sdk": "npm:@luckylillia/plugin-sdk@^1.0.1",
     "@types/node": "^24.12.4",
     "typescript": "^7.0.2",
     "vitest": "^4.1.11"
@@ -72,7 +72,7 @@
       "assets/demo.png"
     ],
     "dependencies": {
-      "@luckylillia/plugin-aiprovider": "^1.0.0"
+      "@luckylillia-dev/plugin-aiprovider": "^1.0.0"
     },
     "service": {
       "required": [

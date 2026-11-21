@@ -1,5 +1,5 @@
-import { Context, h, Schema, Session } from '@luckylillia/plugin-sdk'
-import type { AiError } from '@luckylillia/plugin-aiprovider'
+import { Context, h, Schema, Session } from '@luckylillia-dev/plugin-sdk'
+import type { AiError } from '@luckylillia-dev/plugin-aiprovider'
 import { download, Image } from './image.js'
 import { checkProvenance, provenanceService } from './provenance.js'
 import { SynthIdClient, handleSynthId, type SynthIdConfig } from './synthid.js'
@@ -29,7 +29,7 @@ export const Config: Schema<Config> = Schema.object({
         emptyHint: 'OpenAI 水印检测免费，但有调用频率限制；请求过于频繁时请稍后再试。',
       }).default('').description('服务'),
     }),
-  ]).default({ ai: '' }).description('ChatGPT 图片检测，OpenAI 官方 API'),
+  ]).default({ ai: '' }).description('OpenAI 官方 API，检测 ChatGPT 等 OpenAI 工具生成的图片'),
   synthid: Schema.union([
     Schema.const(false).description('不用'),
     Schema.object({
@@ -49,7 +49,7 @@ export const Config: Schema<Config> = Schema.object({
         Schema.transform(Schema.const(false).hidden(), () => ({ refreshToken: '', pushFilename: '', bgToken: '' })),
       ]).default({ refreshToken: '', pushFilename: '', bgToken: '' }).description('登录凭证'),
     }).description('用'),
-  ]).default(false).description('SynthID 图片检测（纯 HTTP）'),
+  ]).default(false).description('SynthID 检测，支持 Google、OpenAI、NVIDIA、Kakao 生成的图片'),
   vision: Schema.union([
     Schema.const(false).description('不用'),
     Schema.object({
@@ -78,7 +78,9 @@ export function apply(ctx: Context, config: Config) {
   // Login is available before enabling detection; saving a config must not lose the browser session.
   const synthid = new SynthIdClient(ctx, config.synthid || { timeout: 30_000 })
   ctx.inject(['webuiServer'], (ctx) => {
-    ctx.webuiServer.route('/api/aiimgdetector/synthid', { fetch: request => handleSynthId(synthid, request) })
+    // SDK contract: private /api routes run after the host's WebUI password
+    // authentication. This is management access, not a QQ message role check.
+    ctx.webuiServer.route('/api/aiimgdetector/synthid', { fetch: request => handleSynthId(synthid, request) }, { public: false })
   })
   let active = true
   ctx.effect(() => () => { active = false })

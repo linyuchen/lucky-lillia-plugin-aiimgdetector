@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import type { Context } from '@luckylillia/plugin-sdk'
+import type { Context } from '@luckylillia-dev/plugin-sdk'
 import { SynthIdError } from './synthid-result.js'
 
 export interface SynthIdTokens { refreshToken: string; idToken: string; userId: string }

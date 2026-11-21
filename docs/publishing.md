@@ -8,7 +8,7 @@
 
 ## 构建依赖
 
-SDK 和 AI 服务直接从 npm 安装，包名分别为 `@luckylillia/plugin-sdk`、`@luckylillia/plugin-aiprovider`。工作流通过 `npm ci` 按 `package-lock.json` 锁定的版本安装，无需额外检出 Bot 或 AI 服务源码，也无需配置仓库变量。
+SDK 和 AI 服务直接从 npm 安装，包名分别为 `@luckylillia-dev/plugin-sdk`、`@luckylillia-dev/plugin-aiprovider`。工作流通过 `npm ci` 按 `package-lock.json` 锁定的版本安装，无需额外检出 Bot 或 AI 服务源码，也无需配置仓库变量。
 
 本地开发同样可以在本仓库直接执行：
 

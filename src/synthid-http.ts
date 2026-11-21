@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import type { Context } from '@luckylillia/plugin-sdk'
+import type { Context } from '@luckylillia-dev/plugin-sdk'
 import type { Image } from './image.js'
 import { SynthIdTokenStore, type SynthIdTokens } from './synthid-auth.js'
 import { parseSynthIdResponse, SynthIdError, type SynthIdResult } from './synthid-result.js'
